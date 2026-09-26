@@ -47,7 +47,7 @@ struct TableScreen: View {
                 TableTitle(document: document, tableID: tableID)
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                if view?.type != .form && view?.type != .chart {
+                if let type = view?.type, type != .form && type != .chart && type != .dashboard {
                     Button {
                         commandTarget.addRecord()
                     } label: {
@@ -150,6 +150,8 @@ struct ViewContent: View {
         switch view.type {
         case .grid:
             GridContainer(session: session, view: view, state: state, commandTarget: commandTarget)
+        case .list:
+            ListView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .kanban:
             KanbanView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .calendar:
@@ -158,10 +160,14 @@ struct ViewContent: View {
             GalleryView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .timeline:
             RoadmapView(session: session, view: view, state: state, commandTarget: commandTarget)
+        case .gantt:
+            GanttView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .form:
             FormView(session: session, view: view, state: state)
         case .chart:
             ChartView(session: session, view: view, state: state)
+        case .dashboard:
+            DashboardView(session: session, view: view, state: state)
         }
     }
 }

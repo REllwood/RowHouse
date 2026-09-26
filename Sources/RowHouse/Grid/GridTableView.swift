@@ -81,6 +81,26 @@ final class GridTableView: NSTableView {
     }
 }
 
+/// Row background that washes the row in its record's colour when the view colours records.
+final class GridRowView: NSTableRowView {
+    var tint: NSColor? { didSet { if oldValue != tint { needsDisplay = true } } }
+
+    static func tint(for color: ChoiceColor) -> NSColor {
+        let solid = Theme.solid(color)
+        return NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .vibrantDark, .accessibilityHighContrastDarkAqua]) != nil
+            return solid.withAlphaComponent(dark ? 0.075 : 0.055)
+        }
+    }
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard let tint else { return }
+        tint.setFill()
+        dirtyRect.intersection(bounds).fill(using: .sourceOver)
+    }
+}
+
 final class GridHeaderView: NSTableHeaderView {
     weak var controller: GridController?
 

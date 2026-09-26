@@ -214,6 +214,7 @@ final class WindowState {
     var expandedRecord: ExpandedRecord?
     var showViewsList = true
     var collapsedGroups: [String: Set<String>] = [:]
+    var listExpansion: [String: ListExpansion] = [:]
     var newBaseSheet = false
     var csvImportSheet = false
     var airtableImportSheet = false

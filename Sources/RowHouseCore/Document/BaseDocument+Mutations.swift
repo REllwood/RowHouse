@@ -377,10 +377,15 @@ extension BaseDocument {
             config.coverFieldID = fields.first { $0.type == .attachment }?.id
         case .gallery:
             config.coverFieldID = fields.first { $0.type == .attachment }?.id
-        case .calendar, .timeline:
+        case .calendar, .timeline, .gantt:
             let dates = fields.filter { $0.type == .date }
             config.dateFieldID = dates.first?.id ?? fields.first { $0.type.isDateLike }?.id
-            if type == .timeline { config.endDateFieldID = dates.dropFirst().first?.id }
+            if type != .calendar { config.endDateFieldID = dates.dropFirst().first?.id }
+            if type == .gantt { config.dependencyFieldID = fields.first { $0.type == .link && $0.options.linkedTableID == tableID }?.id }
+        case .list:
+            config.listChildLinkFieldID = fields.first { $0.type == .link && $0.options.linkedTableID == tableID }?.id
+        case .dashboard:
+            config.dashboard = DashboardConfig.starter(tableName: table(tableID)?.name ?? "Records", fields: fields, primaryFieldID: primaryField(of: tableID)?.id)
         case .form:
             var form = FormConfig()
             form.title = table(tableID)?.name
@@ -718,10 +723,30 @@ extension ViewConfig {
             form = f
         }
         if var c = chart {
-            c.categoryFieldID = m(c.categoryFieldID)
-            c.valueFieldID = m(c.valueFieldID)
+            c.remap(map)
             chart = c
         }
+        listChildLinkFieldID = m(listChildLinkFieldID)
+        dependencyFieldID = m(dependencyFieldID)
+        if var d = dashboard {
+            d.widgets = d.widgets.map { widget in
+                var w = widget
+                w.filter = w.filter?.remapped(map)
+                w.fieldID = m(w.fieldID)
+                w.chart?.remap(map)
+                w.sort = w.sort.map { SortSpec(id: $0.id, fieldID: map[$0.fieldID] ?? $0.fieldID, ascending: $0.ascending) }
+                w.fieldIDs = w.fieldIDs?.compactMap { map[$0] }
+                return w
+            }
+            dashboard = d
+        }
+    }
+}
+
+extension ChartConfig {
+    mutating func remap(_ map: [String: String]) {
+        categoryFieldID = categoryFieldID.flatMap { map[$0] ?? $0 }
+        valueFieldID = valueFieldID.flatMap { map[$0] ?? $0 }
     }
 }
 
