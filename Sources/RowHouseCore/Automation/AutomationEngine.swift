@@ -8,6 +8,8 @@ public protocol AutomationServices: Sendable {
     func runShortcut(named name: String, input: String) async throws -> String
     /// Sends an email; recipients are already validated addresses.
     func sendEmail(to: [String], cc: [String], bcc: [String], subject: String, body: String) async throws
+    /// Generates text with Claude using the key saved in Settings.
+    func generateText(prompt: String, model: String?) async throws -> String
 }
 
 /// Runs a base's automations.
@@ -539,6 +541,16 @@ public final class AutomationEngine {
             } catch {
                 return StepOutcome(ok: false, message: "Email failed: \(error.localizedDescription)")
             }
+
+        case .generateText:
+            let prompt = render(action.prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !prompt.isEmpty else { return StepOutcome(ok: false, message: "Write a prompt") }
+            do {
+                let text = try await services.generateText(prompt: prompt, model: action.aiModel)
+                return StepOutcome(ok: true, message: "Generated \(text.count) characters", output: .object(["text": .string(text)]))
+            } catch {
+                return StepOutcome(ok: false, message: "AI failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -677,6 +689,8 @@ public final class AutomationEngine {
                 tokens.append(.init(label: "Step \(n) › Output (use output.set keys)", path: "steps.\(n)"))
             case .runShortcut:
                 tokens.append(.init(label: "Step \(n) › Shortcut output", path: "steps.\(n).output"))
+            case .generateText:
+                tokens.append(.init(label: "Step \(n) › Generated text", path: "steps.\(n).text"))
             default:
                 break
             }

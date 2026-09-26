@@ -64,6 +64,10 @@ struct SystemAutomationServices: AutomationServices {
         }.value
     }
 
+    func generateText(prompt: String, model: String?) async throws -> String {
+        try await AIConfiguration.makeService().generateText(prompt: prompt, model: model)
+    }
+
     func sendEmail(to: [String], cc: [String], bcc: [String], subject: String, body: String) async throws {
         let source = MailScript.sendScript(to: to, cc: cc, bcc: bcc, subject: subject, body: body)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in

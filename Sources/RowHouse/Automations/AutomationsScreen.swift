@@ -544,6 +544,8 @@ private struct AddActionMenu: View {
                         action.title = "{{trigger.record.title}}"
                     case .sendEmail:
                         action.subject = automation.trigger.kind.providesRecord ? "{{trigger.record.title}}" : automation.name
+                    case .generateText:
+                        action.prompt = automation.trigger.kind.providesRecord ? "Write a one-sentence summary of {{trigger.record.title}}." : ""
                     default:
                         break
                     }

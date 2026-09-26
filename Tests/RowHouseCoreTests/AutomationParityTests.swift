@@ -580,3 +580,33 @@ struct MailScriptTests {
         #expect(TemplateRenderer.render("{{list.0.name}}|{{list.count}}|{{list.7.name}}|{{list.-1}}", scope: scope) == "a|3||")
     }
 }
+
+@Suite("Generate text with AI") @MainActor
+struct GenerateTextActionTests {
+    @Test func generatedTextFeedsLaterSteps() async throws {
+        let h = try await AutomationTests().harness()
+        let notes = h.doc.createField(in: h.table, name: "Summary", type: .multilineText)
+        let r = h.doc.createRecord(in: h.table, values: [h.name: "Launch plan"])
+        var generate = AutomationAction(kind: .generateText)
+        generate.prompt = "Summarise {{trigger.record.title}}"
+        var update = AutomationAction(kind: .updateRecord)
+        update.tableID = h.table
+        update.recordIDTemplate = "{{trigger.record.id}}"
+        update.fieldValues = [notes: "{{steps.1.text}}"]
+        let id = h.doc.createAutomation(name: "Summarise", trigger: AutomationTrigger(kind: .buttonClicked, tableID: h.table), actions: [generate, update], enabled: true)
+        let run = try #require(await h.engine.runNow(id, recordID: r))
+        #expect(run.status == .succeeded)
+        #expect(h.services.prompts == ["Summarise Launch plan"])
+        #expect(h.doc.record(r)![notes] == "AI: Summarise Launch plan")
+        let tokens = h.engine.availableTokens(for: h.doc.automation(id)!, stepIndex: 1).map(\.path)
+        #expect(tokens.contains("steps.1.text"))
+
+        var empty = AutomationAction(kind: .generateText)
+        empty.prompt = "  "
+        let failing = h.doc.createAutomation(name: "Empty", trigger: AutomationTrigger(kind: .manual), actions: [empty], enabled: true)
+        let failed = try #require(await h.engine.runNow(failing, recordID: nil))
+        #expect(failed.status == .failed)
+        #expect(failed.steps[0].message == "Write a prompt")
+        h.session.close()
+    }
+}

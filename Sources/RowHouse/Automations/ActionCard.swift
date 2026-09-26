@@ -94,6 +94,7 @@ struct ActionCard: View {
         case .runScript: .indigo
         case .runShortcut: .pink
         case .sendEmail: .cyan
+        case .generateText: .purple
         }
     }
 }
@@ -268,6 +269,17 @@ private struct ActionOptions: View {
             TemplateField(title: "Subject", text: Binding(get: { action.subject ?? "" }, set: { action.subject = $0 }), tokens: tokens)
             TemplateField(title: "Message", text: Binding(get: { action.body ?? "" }, set: { action.body = $0 }), tokens: tokens, multiline: true)
             Text("Sent from your default account in the Mail app. Separate addresses with commas. The first time, macOS asks whether RowHouse may control Mail.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .generateText:
+            TemplateField(title: "Prompt", text: Binding(get: { action.prompt ?? "" }, set: { action.prompt = $0 }), tokens: tokens, multiline: true)
+            Picker("Model", selection: Binding(get: { action.aiModel ?? "" }, set: { action.aiModel = $0.isEmpty ? nil : $0 })) {
+                Text("Default (\(AIModel.displayName(for: AIConfiguration.defaultModel)))").tag("")
+                ForEach(AIModel.allCases) { Text($0.displayName).tag($0.rawValue) }
+            }
+            .frame(maxWidth: 360)
+            Text("Sends the prompt to Claude with the API key from Settings › Claude AI. Use the generated text in later steps, for example to update a field or send an email.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

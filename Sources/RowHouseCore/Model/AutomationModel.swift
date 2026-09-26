@@ -154,6 +154,7 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
     case runScript
     case runShortcut
     case sendEmail
+    case generateText
 
     public var displayName: String {
         switch self {
@@ -166,6 +167,7 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
         case .runScript: "Run JavaScript"
         case .runShortcut: "Run Shortcut"
         case .sendEmail: "Send email"
+        case .generateText: "Generate text with AI"
         }
     }
 
@@ -180,6 +182,7 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
         case .runScript: "curlybraces"
         case .runShortcut: "square.stack.3d.up"
         case .sendEmail: "envelope"
+        case .generateText: "sparkles"
         }
     }
 }
@@ -229,6 +232,10 @@ public struct AutomationAction: Codable, Hashable, Sendable, Identifiable {
     public var cc: String?
     public var bcc: String?
     public var subject: String?
+
+    // AI (templated prompt; nil model means the default chosen in Settings)
+    public var prompt: String?
+    public var aiModel: String?
 
     public init(id: String = RowID.action(), kind: ActionKind) {
         self.id = id
