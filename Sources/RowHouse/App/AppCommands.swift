@@ -29,6 +29,7 @@ final class GridCommandTarget {
     var expandSelection: () -> Void = {}
     var deleteSelection: () -> Void = {}
     var exportCSV: () -> Void = {}
+    var printView: () -> Void = {}
     var focusSearch: () -> Void = {}
     var addField: () -> Void = {}
 }
@@ -54,6 +55,11 @@ struct AppCommands: Commands {
                 .disabled(window == nil)
             Button("Export View as CSV…") { grid?.exportCSV() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(grid == nil)
+        }
+        CommandGroup(replacing: .printItem) {
+            Button("Print View…") { grid?.printView() }
+                .keyboardShortcut("p", modifiers: [.command])
                 .disabled(grid == nil)
         }
         CommandMenu("Record") {

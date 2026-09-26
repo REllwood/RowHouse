@@ -83,6 +83,9 @@ struct RecordDetailSheet: View {
                 Button("Duplicate Record") {
                     if let id = document.duplicateRecords([record.id]).first { recordID = id }
                 }
+                Button("Print Record…") {
+                    Printing.print(html: document.exportHTML(recordID: record.id), title: document.primaryTitle(record))
+                }
                 Button("Copy Record Link") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString("rowhouse://record?base=\(document.baseID)&table=\(record.tableID)&record=\(record.id)", forType: .string)

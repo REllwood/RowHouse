@@ -214,3 +214,24 @@ struct ScheduleTests {
         #expect(weekly.nextFireDate(after: start, calendar: cal) == cal.date(from: DateComponents(year: 2026, month: 9, day: 28, hour: 8)))
     }
 }
+
+@Suite("Printable HTML") @MainActor
+struct HTMLExportTests {
+    @Test func viewAndRecordHTMLEscapeValuesAndShowGroups() {
+        let doc = TestSupport.document()
+        let t = doc.createTable(name: "Tasks", starterFields: false, emptyRecords: 0)
+        let name = doc.primaryField(of: t)!.id
+        let notes = doc.createField(in: t, name: "Notes", type: .multilineText)
+        let r = doc.createRecord(in: t, values: [name: "Fix <script> & stuff", notes: "line 1\nline 2"])
+        let view = doc.views(in: t)[0]
+        doc.updateViewConfig(view.id) { $0.groups = [SortSpec(fieldID: notes)] }
+        let html = doc.exportHTML(view: doc.view(view.id)!)
+        #expect(html.contains("Fix &lt;script&gt; &amp; stuff"))
+        #expect(html.contains("line 1<br>line 2"))
+        #expect(html.contains("class=\"group\""))
+        #expect(!html.contains("<script>"))
+        let record = doc.exportHTML(recordID: r)
+        #expect(record.contains("<h1>Fix &lt;script&gt; &amp; stuff</h1>"))
+        #expect(record.contains("<dt>Notes</dt>"))
+    }
+}

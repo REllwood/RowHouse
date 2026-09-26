@@ -87,10 +87,18 @@ struct TableScreen: View {
         .onAppear {
             commandTarget.focusSearch = { searchFocused = true }
             commandTarget.exportCSV = { if let view { exportCSV(view) } }
+            commandTarget.printView = { if let view { printView(view) } }
         }
         .onChange(of: view?.id) { _, _ in
             commandTarget.exportCSV = { if let v = state.currentView(for: tableID, in: document) { exportCSV(v) } }
+            commandTarget.printView = { if let v = state.currentView(for: tableID, in: document) { printView(v) } }
         }
+    }
+
+    private func printView(_ view: ViewModel) {
+        let current = document.view(view.id) ?? view
+        Printing.print(html: document.exportHTML(view: current, collapsed: state.collapsedGroups[view.id] ?? []),
+                       title: "\(document.table(tableID)?.name ?? "Table") - \(current.name)")
     }
 
     private func exportCSV(_ view: ViewModel) {
