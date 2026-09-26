@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RowHouse — a native Mac database on your own iCloud Drive</title>
+  <meta name="description" content="RowHouse is a free, open-source Airtable alternative for the Mac. Grids, kanban, calendars, formulas and automations, with your data in your own iCloud Drive.">
+  <meta property="og:title" content="RowHouse">
+  <meta property="og:description" content="A native Mac database with views, formulas and automations. Your data lives in your own iCloud Drive.">
+  <meta property="og:image" content="https://rellwood.github.io/RowHouse/assets/hero-light.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-soft: #f5f6fb;
+      --text: #14151a;
+      --muted: #5b6070;
+      --line: #e6e8ef;
+      --card: #ffffff;
+      --accent: #5b5fef;
+      --accent-2: #9b45f2;
+      --accent-3: #3f8cff;
+      --shadow: 0 20px 60px rgba(40, 30, 120, 0.14);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e0f14;
+        --bg-soft: #151722;
+        --text: #f1f2f7;
+        --muted: #a2a7b8;
+        --line: #252838;
+        --card: #161824;
+        --shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; }
+    img { max-width: 100%; display: block; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+    nav {
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: saturate(180%) blur(16px);
+      -webkit-backdrop-filter: saturate(180%) blur(16px);
+      background: color-mix(in srgb, var(--bg) 78%, transparent);
+      border-bottom: 1px solid var(--line);
+    }
+    nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+    .brand img { width: 30px; height: 30px; }
+    .links { display: flex; gap: 22px; align-items: center; font-size: 15px; }
+    .links a { text-decoration: none; color: var(--muted); }
+    .links a:hover { color: var(--text); }
+    @media (max-width: 640px) { .links .hide-sm { display: none; } }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 22px; border-radius: 12px; font-weight: 600; text-decoration: none;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: linear-gradient(135deg, var(--accent-3), var(--accent) 55%, var(--accent-2)); color: #fff; box-shadow: 0 10px 30px rgba(91, 95, 239, .35); }
+    .btn-ghost { border: 1px solid var(--line); background: var(--card); }
+    .btn-small { padding: 8px 14px; border-radius: 10px; font-size: 14px; }
+    header.hero { text-align: center; padding: 72px 0 32px; position: relative; overflow: hidden; }
+    header.hero::before {
+      content: ""; position: absolute; inset: -40% -20% auto; height: 620px;
+      background: radial-gradient(closest-side, rgba(91,95,239,.20), transparent),
+                  radial-gradient(closest-side at 70% 40%, rgba(155,69,242,.16), transparent);
+      pointer-events: none;
+    }
+    .hero-icon { width: 104px; height: 104px; margin: 0 auto 18px; filter: drop-shadow(0 16px 30px rgba(91,95,239,.35)); }
+    h1 { font-size: clamp(36px, 6vw, 64px); line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 18px; font-weight: 800; }
+    h1 .grad { background: linear-gradient(135deg, var(--accent-3), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lede { font-size: clamp(17px, 2.2vw, 21px); color: var(--muted); max-width: 680px; margin: 0 auto 28px; }
+    .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .meta { margin-top: 14px; font-size: 14px; color: var(--muted); }
+    .shot { margin: 44px auto 0; border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); border: 1px solid var(--line); }
+    section { padding: 72px 0; }
+    section.soft { background: var(--bg-soft); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    h2 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em; margin: 0 0 12px; line-height: 1.15; }
+    .sub { color: var(--muted); font-size: 18px; max-width: 700px; margin: 0 0 36px; }
+    .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+    .card h3 { margin: 12px 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    .dot { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-size: 20px; color: #fff; }
+    .two { display: grid; gap: 40px; grid-template-columns: 1fr 1fr; align-items: center; }
+    @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+    .media { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); }
+    ul.checks { list-style: none; padding: 0; margin: 0; }
+    ul.checks li { padding: 8px 0 8px 30px; position: relative; color: var(--muted); }
+    ul.checks li strong { color: var(--text); }
+    ul.checks li::before { content: "✓"; position: absolute; left: 0; top: 8px; width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, var(--accent-3), var(--accent-2)); color: #fff; font-size: 12px; display: grid; place-items: center; font-weight: 700; }
+    pre { background: #0f1117; color: #e6e7ee; border-radius: 12px; padding: 18px; overflow-x: auto; font-size: 13px; line-height: 1.55; border: 1px solid #23263a; }
+    code { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+    .steps { counter-reset: step; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .step { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; position: relative; }
+    .step::before { counter-increment: step; content: counter(step); position: absolute; top: -14px; left: 20px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+    .step h3 { margin: 6px 0 6px; font-size: 16px; }
+    .step p { margin: 0; color: var(--muted); font-size: 15px; }
+    footer { padding: 40px 0; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+    footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="wrap">
+      <a class="brand" href="#"><img src="assets/icon.png" alt="">RowHouse</a>
+      <div class="links">
+        <a class="hide-sm" href="#features">Features</a>
+        <a class="hide-sm" href="#sync">How sync works</a>
+        <a class="hide-sm" href="#automations">Automations</a>
+        <a href="https://github.com/REllwood/RowHouse">GitHub</a>
+        <a class="btn btn-primary btn-small" href="https://github.com/REllwood/RowHouse/releases/latest">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="wrap">
+      <img class="hero-icon" src="assets/icon.png" alt="RowHouse app icon">
+      <h1>Your databases,<br><span class="grad">in your iCloud Drive.</span></h1>
+      <p class="lede">RowHouse is a native Mac app for building databases with grids, kanban boards, calendars, formulas and automations. It works like Airtable, but there's no server and no account, and your data never leaves your Macs.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/REllwood/RowHouse/releases/latest">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5 3.5 7l1.06-1.06L7.25 8.63V1h1.5v7.63l2.69-2.69L12.5 7 8 11.5ZM2 13.5h12V15H2v-1.5Z"/></svg>
+          Download for Mac
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/REllwood/RowHouse">View on GitHub</a>
+      </div>
+      <p class="meta">Free and open source · macOS 14 or later · Apple silicon and Intel</p>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.png">
+        <img class="shot" src="assets/hero-light.png" alt="A RowHouse project tracker grid">
+      </picture>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Everything you use in Airtable, on your own Mac</h2>
+      <p class="sub">Tables, linked records and 24 field types, with views that each keep their own filters, sorts and groups.</p>
+      <div class="grid">
+        <div class="card"><div class="dot" style="background:#2d7ff9">▦</div><h3>Seven view types</h3><p>Grid, Kanban, Calendar, Gallery, Timeline, Form and Chart. Drag cards between stacks and records between days.</p></div>
+        <div class="card"><div class="dot" style="background:#20c9a6">ƒ</div><h3>84 formula functions</h3><p>Airtable-compatible formulas, plus lookups, rollups and counts through linked records, with live validation.</p></div>
+        <div class="card"><div class="dot" style="background:#f7a400">⚡</div><h3>Automations</h3><p>Record, form, button and scheduled triggers. Create and update records, send notifications, call webhooks, run scripts and Shortcuts.</p></div>
+        <div class="card"><div class="dot" style="background:#8b46ff">⌘</div><h3>A real Mac app</h3><p>A fast, keyboard-driven grid with range selection, copy and paste to and from Numbers or Excel, undo, dark mode, and a menu bar item.</p></div>
+        <div class="card"><div class="dot" style="background:#f82b60">⇄</div><h3>Import from Airtable</h3><p>Bring a whole base across, including linked records, select options, formulas and attachments. CSV import detects field types.</p></div>
+        <div class="card"><div class="dot" style="background:#18bfff">☁︎</div><h3>Sync without a server</h3><p>Bases are plain files in iCloud Drive. Edits from all your Macs merge field by field, even offline.</p></div>
+      </div>
+      <img class="shot" src="assets/tour.gif" alt="A tour of RowHouse's views" loading="lazy">
+    </div>
+  </section>
+
+  <section id="sync" class="soft">
+    <div class="wrap two">
+      <div>
+        <h2>Sync that can't conflict</h2>
+        <p class="sub">Each Mac writes only its own change log, so iCloud Drive never has to guess, and "conflicted copies" never appear. Every Mac merges the others' logs with hybrid logical clocks and last-writer-wins per field, and they all reach the same result.</p>
+        <ul class="checks">
+          <li><strong>Edit anywhere, even offline.</strong> Changes merge when your Macs reconnect.</li>
+          <li><strong>Different fields both survive.</strong> Two people editing one record keep both edits.</li>
+          <li><strong>Automations run once.</strong> They fire only on the Mac where the change happened.</li>
+          <li><strong>Plain, open files.</strong> JSON you can back up, inspect or version.</li>
+        </ul>
+      </div>
+      <div class="media"><img src="assets/sync.gif" alt="Edits from another Mac appearing live" loading="lazy"></div>
+    </div>
+  </section>
+
+  <section id="automations">
+    <div class="wrap two">
+      <div class="media"><img src="assets/automations-dark.png" alt="The automation editor" loading="lazy"></div>
+      <div>
+        <h2>Automations with room to grow</h2>
+        <p class="sub">Start with a notification when a project is blocked. Build up to scripts that call your APIs.</p>
+<pre><code>const table = base.getTable("Projects");
+const { records } = await table.selectRecordsAsync();
+const late = records.filter(r =>
+  r.getCellValueAsString("Health") === "🔴 Overdue");
+await fetch("https://hooks.example.com/late", {
+  method: "POST",
+  body: JSON.stringify({ count: late.length })
+});
+output.set("late", late.length);</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="soft">
+    <div class="wrap">
+      <h2>Up and running in a minute</h2>
+      <p class="sub">No sign-up, no server to host, and no configuration.</p>
+      <div class="steps">
+        <div class="step"><h3>Download</h3><p>Get the DMG from GitHub Releases and drag RowHouse to Applications.</p></div>
+        <div class="step"><h3>Pick a template</h3><p>Project Tracker, Sales CRM, Content Calendar or Inventory. Or import a CSV or Airtable base.</p></div>
+        <div class="step"><h3>Open it on your other Macs</h3><p>With iCloud Drive on, your bases appear on every Mac and stay in sync.</p></div>
+      </div>
+      <p style="margin-top:36px"><a class="btn btn-primary" href="https://github.com/REllwood/RowHouse/releases/latest">Download RowHouse</a></p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <span>© 2026 Rhys Ellwood · MIT License</span>
+      <span>RowHouse is an independent project and isn't affiliated with Airtable.</span>
+    </div>
+  </footer>
+</body>
+</html>
