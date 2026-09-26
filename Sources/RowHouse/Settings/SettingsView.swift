@@ -12,6 +12,7 @@ struct SettingsView: View {
                 .tabItem { Label("Automations", systemImage: "bolt") }
             AISettings().tabItem { Label("Claude AI", systemImage: "sparkle") }
             WebhookSettings().tabItem { Label("Webhooks", systemImage: "point.3.connected.trianglepath.dotted") }
+            AssistantSettings().tabItem { Label("AI Assistants", systemImage: "sparkles") }
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
         }

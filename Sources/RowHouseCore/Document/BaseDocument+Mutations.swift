@@ -24,14 +24,17 @@ extension BaseDocument {
     }
 
     /// Records this device's name so other devices can show who made changes. Not undoable.
-    public func registerDevice() {
+    /// `kind` is nil for a Mac and `DeviceInfo.agentKind` for an AI assistant.
+    public func registerDevice(kind: String? = nil) {
         let existing = hasDevice(deviceID)
         let stale = existing.map { Date().timeIntervalSince($0.lastSeen) > 86_400 } ?? true
-        guard existing?.name != deviceName || stale else { return }
-        commit([Mutation(.device, deviceID, [
+        guard existing?.name != deviceName || existing?.kind != kind || stale else { return }
+        var set: [String: JSONValue] = [
             "name": .string(deviceName),
             "lastSeen": .number(Date().timeIntervalSince1970 * 1000),
-        ])], undoable: false)
+        ]
+        if let kind { set["kind"] = .string(kind) }
+        commit([Mutation(.device, deviceID, set)], undoable: false)
     }
 
     // MARK: - Tables
@@ -661,9 +664,12 @@ extension BaseDocument {
 
     // MARK: - Comments
 
-    public func addComment(to recordID: String, text: String) {
+    /// Adds a comment and returns its id (nil when the text is empty).
+    @discardableResult
+    public func addComment(to recordID: String, text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
+        let id = RowID.comment()
         var set: [String: JSONValue] = [
             "record": .string(recordID),
             "text": .string(trimmed),
@@ -674,7 +680,8 @@ extension BaseDocument {
         ]
         let mentioned = mentionedPeople(in: trimmed)
         if !mentioned.isEmpty { set["mentions"] = .array(mentioned.map { .string($0.id) }) }
-        commit([Mutation(.comment, RowID.comment(), set)], actionName: "Add Comment")
+        commit([Mutation(.comment, id, set)], actionName: "Add Comment")
+        return id
     }
 
     /// People named with "@Name" in `text`, matching the longest collaborator name (ignoring case).

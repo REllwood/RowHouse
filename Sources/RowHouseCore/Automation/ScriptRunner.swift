@@ -249,11 +249,12 @@ final class ScriptBridge: @unchecked Sendable {
             onMain {
                 guard document.table(tableID) != nil else { return error("No table \(tableID)") }
                 let fields = document.fields(in: tableID)
+                let coding = RecordValueCoding(document: document, style: .scripting)
                 return JSONValue.array(document.records(in: tableID).map { r in
                     var cells: [String: JSONValue] = [:]
                     var text: [String: JSONValue] = [:]
                     for f in fields {
-                        cells[f.id] = ScriptValues.jsValue(document.value(r, f), field: f, document: document)
+                        cells[f.id] = coding.value(of: r, field: f)
                         text[f.id] = .string(document.displayString(r, f))
                     }
                     return .object(["id": .string(r.id), "name": .string(document.primaryTitle(r)), "cells": .object(cells), "text": .object(text)])
@@ -263,21 +264,26 @@ final class ScriptBridge: @unchecked Sendable {
         let create: @convention(block) (String, String) -> String = { [unowned self] tableID, json in
             onMain {
                 guard document.table(tableID) != nil else { return error("No table \(tableID)") }
-                switch ScriptValues.storedValues(json, tableID: tableID, document: document) {
-                case .failure(let e): return error(e.message)
-                case .success(let values):
-                    return JSONValue.string(document.createRecord(in: tableID, values: values, origin: origin)).jsonString
+                guard let fields = (try? JSONValue.parse(json))?.objectValue else { return error("Fields must be an object") }
+                do throws(RecordValueCoding.Failure) {
+                    let ids = try RecordValueCoding(document: document, style: .scripting, typecast: true, lenient: true)
+                        .createRecords([fields], in: tableID, origin: origin)
+                    return JSONValue.string(ids.first ?? "").jsonString
+                } catch let failure {
+                    return error(failure.message)
                 }
             }
         }
         let update: @convention(block) (String, String, String) -> String = { [unowned self] tableID, recordID, json in
             onMain {
                 guard let r = document.record(recordID), r.tableID == tableID else { return error("No record \(recordID) in this table") }
-                switch ScriptValues.storedValues(json, tableID: tableID, document: document) {
-                case .failure(let e): return error(e.message)
-                case .success(let values):
-                    document.updateRecord(recordID, values: values, actionName: "Script Update", origin: origin)
+                guard let fields = (try? JSONValue.parse(json))?.objectValue else { return error("Fields must be an object") }
+                do throws(RecordValueCoding.Failure) {
+                    try RecordValueCoding(document: document, style: .scripting, typecast: true, lenient: true)
+                        .updateRecords([(recordID, fields)], in: tableID, actionName: "Script Update", origin: origin)
                     return "null"
+                } catch let failure {
+                    return error(failure.message)
                 }
             }
         }
@@ -355,109 +361,5 @@ final class ScriptBridge: @unchecked Sendable {
         init(_ value: String) { _value = value }
         func set(_ v: String) { lock.withLock { _value = v } }
         var value: String { lock.withLock { _value } }
-    }
-}
-
-/// Converts between cell values and the plain JSON shapes scripts read and write.
-@MainActor
-enum ScriptValues {
-    struct Failure: Error { var message: String }
-
-    static func jsValue(_ v: CellValue, field: FieldModel, document: BaseDocument) -> JSONValue {
-        switch v {
-        case .empty: return field.type == .checkbox ? .bool(false) : .null
-        case .text(let s): return .string(s)
-        case .number(let n): return .number(n)
-        case .bool(let b): return .bool(b)
-        case .date(let d, let t): return .string(t ? DateCoding.iso8601String(d) : DateCoding.encode(d, includeTime: false))
-        case .choice(let c): return .object(["id": .string(c.id), "name": .string(c.name), "color": .string(c.color.rawValue)])
-        case .choices(let cs): return .array(cs.map { .object(["id": .string($0.id), "name": .string($0.name), "color": .string($0.color.rawValue)]) })
-        case .attachments(let atts): return .array(atts.map { .object(["id": .string($0.id), "filename": .string($0.filename), "size": .number(Double($0.size)), "type": .string($0.mimeType)]) })
-        case .links(let refs): return .array(refs.map { .object(["id": .string($0.id), "name": .string($0.title)]) })
-        case .collaborators(let people):
-            let objects: [JSONValue] = people.map { .object(["id": .string($0.id), "name": .string($0.displayName), "email": .string($0.email)]) }
-            let single = field.type == .createdBy || field.type == .lastModifiedBy
-                || (field.type == .collaborator && field.options.allowMultipleCollaborators != true)
-            return single && objects.count == 1 ? objects[0] : .array(objects)
-        case .list(let items): return .array(items.map { jsValue($0, field: field, document: document) })
-        case .error(let m): return .object(["error": .string(m)])
-        }
-    }
-
-    static func storedValues(_ json: String, tableID: String, document: BaseDocument) -> Result<[String: JSONValue], Failure> {
-        guard let obj = (try? JSONValue.parse(json))?.objectValue else { return .failure(Failure(message: "Fields must be an object")) }
-        var out: [String: JSONValue] = [:]
-        for (key, value) in obj {
-            guard let field = document.field(key).flatMap({ $0.tableID == tableID ? $0 : nil }) ?? document.field(named: key, in: tableID) else {
-                return .failure(Failure(message: "No field named \(key)"))
-            }
-            guard field.isEditable else { return .failure(Failure(message: "Field \(field.name) is computed and can't be written")) }
-            switch stored(value, field: field, document: document) {
-            case .success(let v): out[field.id] = v
-            case .failure(let e): return .failure(e)
-            }
-        }
-        return .success(out)
-    }
-
-    static func stored(_ value: JSONValue, field: FieldModel, document: BaseDocument) -> Result<JSONValue, Failure> {
-        if value.isNull { return .success(.null) }
-        switch field.type {
-        case .number, .currency, .percent, .duration, .rating:
-            guard var n = value.numberValue ?? value.stringValue.flatMap({ ValueParsing.number(from: $0) }), n.isFinite else {
-                return .failure(Failure(message: "\(field.name) expects a number"))
-            }
-            if field.type == .rating {
-                n = min(max(0, n.rounded()), Double(field.options.ratingMax ?? 5))
-                return .success(n == 0 ? .null : .number(n))
-            }
-            return .success(.number(n))
-        case .checkbox:
-            if let b = value.boolValue { return .success(.bool(b)) }
-            return .success(.bool(ValueParsing.truthyStrings.contains(TemplateRenderer.string(value).lowercased())))
-        case .singleSelect:
-            let name = value["name"]?.stringValue ?? value.stringValue
-            if let id = value["id"]?.stringValue, field.choice(id: id) != nil { return .success(.string(id)) }
-            guard let name else { return .failure(Failure(message: "\(field.name) expects an option name")) }
-            return .success(document.parseValue(name, for: field, createMissingChoices: true))
-        case .multipleSelects:
-            let items = value.arrayValue ?? [value]
-            var ids: [String] = []
-            for item in items {
-                if let id = item["id"]?.stringValue, field.choice(id: id) != nil { ids.append(id); continue }
-                let name = item["name"]?.stringValue ?? item.stringValue ?? ""
-                if let id = document.parseValue(name, for: document.field(field.id) ?? field, createMissingChoices: true).stringArray.first { ids.append(id) }
-            }
-            return .success(ids.isEmpty ? .null : .array(ids.map(JSONValue.string)))
-        case .link:
-            let items = value.arrayValue ?? [value]
-            var ids: [String] = []
-            for item in items {
-                let key = item["id"]?.stringValue ?? item.stringValue ?? ""
-                if let r = document.record(key), r.tableID == field.options.linkedTableID {
-                    ids.append(key)
-                } else if let tableID = field.options.linkedTableID, let found = document.findRecord(titled: key, in: tableID) {
-                    ids.append(found)
-                }
-            }
-            return .success(ids.isEmpty ? .null : .array(ids.map(JSONValue.string)))
-        case .attachment:
-            return .failure(Failure(message: "Attachments can't be set from scripts"))
-        case .collaborator:
-            var ids: [String] = []
-            for item in value.arrayValue ?? [value] {
-                let key = item["id"]?.stringValue ?? item["email"]?.stringValue ?? item["name"]?.stringValue ?? item.stringValue ?? ""
-                guard let person = document.person(matching: key) else {
-                    return .failure(Failure(message: "\(field.name): no collaborator matches “\(key)”"))
-                }
-                if !ids.contains(person.id) { ids.append(person.id) }
-            }
-            return .success(document.storedCollaborators(ids, field: field))
-        case .barcode:
-            guard let barcode = BarcodeValue(json: value) else { return .failure(Failure(message: "\(field.name) expects barcode text")) }
-            return .success(barcode.json)
-        default:
-            return .success(document.parseValue(TemplateRenderer.string(value), for: field, createMissingChoices: true))
-        }
     }
 }

@@ -25,11 +25,17 @@ public final class Library {
 
     @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private let defaults: UserDefaults
-    static let customPathKey = "RowHouseLibraryPath"
+    /// Preference key for the folder chosen in Settings (absent means iCloud Drive).
+    public static let customPathKey = "RowHouseLibraryPath"
 
-    public init(defaults: UserDefaults = .standard) {
+    public convenience init(defaults: UserDefaults = .standard) {
+        self.init(rootURL: Library.resolveRoot(defaults: defaults), defaults: defaults)
+    }
+
+    /// A library in a folder chosen by the caller rather than by the storage setting.
+    public init(rootURL: URL, defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.rootURL = Library.resolveRoot(defaults: defaults)
+        self.rootURL = rootURL
         prepareRoot()
         refresh()
         startWatching()
@@ -48,7 +54,9 @@ public final class Library {
 
     public static var isICloudDriveAvailable: Bool { iCloudDriveRoot != nil }
 
-    static func resolveRoot(defaults: UserDefaults) -> URL {
+    /// The library folder: `ROWHOUSE_LIBRARY_PATH`, then the folder chosen in Settings (read from
+    /// `defaults`), then iCloud Drive, then a folder on this Mac.
+    public static func resolveRoot(defaults: UserDefaults) -> URL {
         if let env = ProcessInfo.processInfo.environment["ROWHOUSE_LIBRARY_PATH"], !env.isEmpty {
             return URL(fileURLWithPath: env, isDirectory: true)
         }
