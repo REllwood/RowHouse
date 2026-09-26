@@ -104,38 +104,21 @@ To sync between Macs, turn on iCloud Drive on each one. RowHouse saves bases to 
 
 ## How it works
 
-RowHouse is three Swift modules: a formula engine, a core library that has no UI, and the Mac app.
+<p align="center">
+  <img src=".github/assets/how-it-works.gif" alt="An animated map of RowHouse's source code: 2,297 symbols scatter and settle into islands for views, BaseDocument, formulas, sync, automations, the MCP server and importers, then an edit is traced from the grid through BaseDocument, formulas, the change log and sync to automations and AI assistants" width="100%">
+</p>
 
-```mermaid
-flowchart LR
-  subgraph App["RowHouse.app · SwiftUI + AppKit"]
-    UI["Views<br/>grid · list · kanban · calendar · gallery<br/>timeline · gantt · form · chart · dashboard"]
-    AUTO["Automation engine<br/>triggers · actions · schedules · webhooks"]
-    JS["Script runner<br/>JavaScriptCore"]
-  end
-  MCP["rowhouse-mcp<br/>MCP server for AI assistants"]
-  subgraph Core["RowHouseCore"]
-    DOC["BaseDocument<br/>tables · fields · views · records · undo"]
-    Q["View queries<br/>filter · sort · group · search"]
-    CE["Compute engine<br/>formulas · lookups · rollups · counts"]
-    STATE["BaseState<br/>last-writer-wins registers + hybrid logical clocks"]
-    IO["BaseStorage<br/>op logs · snapshots · attachments"]
-  end
-  F["RowHouseFormula<br/>parser + 84 functions"]
-  DRIVE[("iCloud Drive<br/>RowHouse/*.rowhouse")]
+The map above is RowHouse's own source code, drawn with [graphify](https://github.com/Graphify-Labs/graphify). Each dot is a type, function or file, and each line is a call or reference between them. The dots settle into islands for the parts of the app, and then the path of a single edit lights up across them:
 
-  UI --> DOC
-  UI --> Q
-  MCP --> DOC
-  AUTO --> DOC
-  JS --> DOC
-  Q --> CE
-  CE --> F
-  DOC --> STATE
-  DOC -- "local edits" --> IO
-  IO -- "edits from other Macs" --> DOC
-  IO <--> DRIVE
-```
+1. You edit a record in the grid or another view.
+2. `BaseDocument` applies the change and records undo.
+3. Formulas, lookups and rollups recompute.
+4. The change is appended to this Mac's own log, stamped with a hybrid logical clock.
+5. iCloud Drive syncs the log, and every other Mac merges it field by field.
+6. Automations run once, on the Mac where the change was made.
+7. Claude and Codex edit through the MCP server, as a device of their own.
+
+The code is four Swift modules: a formula engine (`RowHouseFormula`), a core library with no UI (`RowHouseCore`), the MCP server (`RowHouseMCPKit`) and the Mac app.
 
 ### Plain files, one writer each
 
