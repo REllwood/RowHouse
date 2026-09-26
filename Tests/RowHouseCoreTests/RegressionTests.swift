@@ -224,3 +224,21 @@ struct AutomationRegressionTests {
         session.close()
     }
 }
+
+@Suite("Library errors") @MainActor
+struct LibraryErrorTests {
+    @Test func unreadableFoldersAreReported() throws {
+        let root = TestSupport.tempDirectory()
+        let defaults = UserDefaults(suiteName: "rowhouse-tests-\(UUID().uuidString)")!
+        defaults.set(root.path, forKey: "RowHouseLibraryPath")
+        let library = Library(defaults: defaults)
+        #expect(library.lastError == nil)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path) }
+        library.refresh()
+        #expect(library.lastError != nil)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        library.refresh()
+        #expect(library.lastError == nil)
+    }
+}

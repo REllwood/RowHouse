@@ -105,11 +105,57 @@ struct MainWindow: View {
     }
 }
 
+/// Shown when the library folder can't be read, which almost always means RowHouse hasn't been
+/// given access to iCloud Drive (or the chosen folder) in System Settings.
+struct StorageAccessBanner: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        if let error = app.library.lastError {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.icloud")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("RowHouse can't reach its folder").font(.headline)
+                    Text("Allow RowHouse to use iCloud Drive in System Settings › Privacy & Security › Files & Folders, or choose another place for your bases in Settings.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                    Text(error).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 6) {
+                    Button("Open System Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")!)
+                    }
+                    Button("Try Again") { app.library.refresh() }
+                    SettingsLink { Text("Choose Another Folder…") }
+                }
+                .controlSize(.small)
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.35)))
+            .padding(12)
+        }
+    }
+}
+
 struct DetailRouter: View {
     @Environment(AppModel.self) private var app
     var state: WindowState
 
     var body: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                StorageAccessBanner()
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if let dest = state.destination, let session = app.session(dest.baseID) {
             switch dest {
             case .table(_, let tableID):
