@@ -102,6 +102,8 @@ public struct CommentModel: Identifiable, Equatable, Sendable {
     public var authorDeviceID: String
     public var authorName: String
     public var createdTime: Date
+    /// People @mentioned in the text (person ids).
+    public var mentions: [String] = []
 }
 
 public struct DeviceInfo: Identifiable, Equatable, Sendable {

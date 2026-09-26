@@ -30,6 +30,8 @@ public struct ChangeSet: Sendable {
     public var schemaChanged = false
     public var automationsChanged = false
     public var commentsChanged = false
+    /// Comments written for the first time (not ones restored by undo).
+    public var createdComments: [String] = []
     public var baseInfoChanged = false
     public var affectedTables: Set<String> = []
 

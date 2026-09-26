@@ -79,6 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .list]
     }
+
+    /// Clicking a mention notification opens the record.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let link = response.notification.request.content.userInfo["link"] as? String,
+              let url = URL(string: link), url.scheme == "rowhouse" else { return }
+        await MainActor.run { _ = NSWorkspace.shared.open(url) }
+    }
 }
 
 /// The menu bar item that keeps RowHouse reachable while it runs automations with no window open.

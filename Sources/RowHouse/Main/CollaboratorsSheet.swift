@@ -8,6 +8,7 @@ struct CollaboratorsSheet: View {
     @State private var newName = ""
     @State private var newEmail = ""
     @State private var confirmRemove: Person?
+    @State private var me: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -23,11 +24,17 @@ struct CollaboratorsSheet: View {
                     Text("No collaborators yet.").foregroundStyle(.secondary)
                 }
                 ForEach(document.people) { person in
-                    PersonRow(document: document, person: person) { confirmRemove = person }
+                    PersonRow(document: document, person: person, isMe: me == person.id, toggleMe: {
+                        me = me == person.id ? nil : person.id
+                        Me.set(me, in: document.baseID)
+                    }) { confirmRemove = person }
                 }
             }
             .listStyle(.bordered(alternatesRowBackgrounds: true))
             .frame(minHeight: 220)
+            Text("Mark yourself with Me to get a notification on this Mac when someone @mentions you in a comment.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 TextField("Name", text: $newName)
                     .textFieldStyle(.roundedBorder)
@@ -45,7 +52,8 @@ struct CollaboratorsSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: 560)
+        .onAppear { me = Me.personID(in: document.baseID) }
         .confirmationDialog("Remove \(confirmRemove?.displayName ?? "")?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })) {
             Button("Remove", role: .destructive) {
                 if let person = confirmRemove { document.removePerson(person.id) }
@@ -66,6 +74,8 @@ struct CollaboratorsSheet: View {
 private struct PersonRow: View {
     let document: BaseDocument
     let person: Person
+    let isMe: Bool
+    let toggleMe: () -> Void
     let remove: () -> Void
 
     var body: some View {
@@ -87,6 +97,14 @@ private struct PersonRow: View {
             .help("Colour")
             CommitTextField(text: person.name, prompt: "Name") { name in update { $0.name = name } }
             CommitTextField(text: person.email, prompt: "Email") { email in update { $0.email = email } }
+            Button(action: toggleMe) {
+                Text("Me").font(.caption.weight(isMe ? .semibold : .regular))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(isMe ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05)))
+            }
+            .buttonStyle(.borderless)
+            .help(isMe ? "You on this Mac. You get a notification when someone @mentions you." : "Mark as you on this Mac to get notified of @mentions")
             Button(action: remove) {
                 Image(systemName: "minus.circle")
             }

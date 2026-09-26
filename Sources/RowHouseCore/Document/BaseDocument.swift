@@ -173,6 +173,10 @@ public final class BaseDocument {
         return automationsByID[id]
     }
 
+    public func comment(_ id: String) -> CommentModel? {
+        commentsByID[id]
+    }
+
     public func comments(for recordID: String) -> [CommentModel] {
         _ = dataRevision
         return commentsByID.values.filter { $0.recordID == recordID }.sorted { $0.createdTime < $1.createdTime }
@@ -454,8 +458,10 @@ public final class BaseDocument {
             automationsByID[id] = entity.flatMap { Self.makeAutomation(id, $0) }
             changes.automationsChanged = true
         case .comment:
+            let existed = commentsByID[id] != nil
             commentsByID[id] = entity.flatMap { makeComment(id, $0) }
             changes.commentsChanged = true
+            if !existed, commentsByID[id] != nil, changedKeys.contains("created") { changes.createdComments.append(id) }
         case .device:
             devicesByID[id] = entity.flatMap { Self.makeDevice(id, $0) }
             changes.baseInfoChanged = true
@@ -566,7 +572,8 @@ public final class BaseDocument {
             text: text,
             authorDeviceID: author,
             authorName: e["authorName"]?.stringValue ?? "Unknown",
-            createdTime: Date(timeIntervalSince1970: (e["created"]?.numberValue ?? 0) / 1000)
+            createdTime: Date(timeIntervalSince1970: (e["created"]?.numberValue ?? 0) / 1000),
+            mentions: e["mentions"]?.stringArray ?? []
         )
     }
 

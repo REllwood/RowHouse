@@ -300,7 +300,7 @@ private struct CommentsPanel: View {
                                     .buttonStyle(.borderless)
                                 }
                             }
-                            Text(comment.text)
+                            Text(highlighted(comment.text))
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -311,8 +311,31 @@ private struct CommentsPanel: View {
                 .padding(16)
             }
             Divider()
+            if let query = mentionQuery {
+                let matches = document.people.filter { query.isEmpty || $0.displayName.lowercased().hasPrefix(query.lowercased()) || $0.email.lowercased().hasPrefix(query.lowercased()) }.prefix(5)
+                if !matches.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(matches)) { person in
+                            Button {
+                                insertMention(person, replacing: query)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    PersonAvatar(person: person, size: 18)
+                                    Text(person.displayName)
+                                    if !person.email.isEmpty { Text(person.email).foregroundStyle(.secondary) }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+            }
             HStack(alignment: .bottom) {
-                TextField("Leave a comment", text: $draft, axis: .vertical)
+                TextField(document.people.isEmpty ? "Leave a comment" : "Leave a comment, @ to mention", text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...5)
                     .onSubmit(send)
@@ -330,5 +353,31 @@ private struct CommentsPanel: View {
     private func send() {
         document.addComment(to: record.id, text: draft)
         draft = ""
+    }
+
+    /// The text typed after an "@" at the end of the draft, while a mention is being written.
+    private var mentionQuery: String? {
+        guard !document.people.isEmpty, let at = draft.lastIndex(of: "@") else { return nil }
+        if at > draft.startIndex, !draft[draft.index(before: at)].isWhitespace { return nil }
+        let query = draft[draft.index(after: at)...]
+        guard query.count <= 40, !query.contains(where: \.isNewline) else { return nil }
+        if document.people.contains(where: { query.lowercased().hasPrefix($0.displayName.lowercased() + " ") }) { return nil }
+        return String(query)
+    }
+
+    private func insertMention(_ person: Person, replacing query: String) {
+        draft.removeLast(query.count + 1)
+        draft += "@" + person.displayName + " "
+    }
+
+    private func highlighted(_ text: String) -> AttributedString {
+        var result = AttributedString(text)
+        for mention in document.mentionRanges(in: text) {
+            guard let lower = AttributedString.Index(mention.range.lowerBound, within: result),
+                  let upper = AttributedString.Index(mention.range.upperBound, within: result) else { continue }
+            result[lower..<upper].foregroundColor = mention.person.color.swiftUI
+            result[lower..<upper].font = .body.weight(.semibold)
+        }
+        return result
     }
 }

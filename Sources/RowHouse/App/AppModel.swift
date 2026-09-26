@@ -18,6 +18,7 @@ final class AppModel {
     var alert: AppAlert?
 
     @ObservationIgnored private let services = SystemAutomationServices()
+    @ObservationIgnored private var mentionObservers: [String: UUID] = [:]
 
     private init() {
         library = Library()
@@ -67,11 +68,36 @@ final class AppModel {
                 sessions[entry.baseID] = session
                 loadErrors[entry.baseID] = nil
                 then?(session)
-                engines[entry.baseID] = AutomationEngine(session: session, services: services)
+                startServices(for: session)
             } catch {
                 loadErrors[entry.baseID] = error.localizedDescription
             }
             loading.remove(entry.baseID)
+        }
+    }
+
+    /// Starts a base's automations and watches for comments that @mention you from other Macs.
+    private func startServices(for session: BaseSession) {
+        engines[session.id] = AutomationEngine(session: session, services: services)
+        if let old = mentionObservers[session.id] { session.document.removeObserver(old) }
+        mentionObservers[session.id] = session.document.addObserver { [weak self, weak session] changes in
+            guard changes.origin == .remote, !changes.createdComments.isEmpty, let self, let session else { return }
+            self.notifyMentions(changes.createdComments, in: session)
+        }
+    }
+
+    private func notifyMentions(_ commentIDs: [String], in session: BaseSession) {
+        guard let me = Me.personID(in: session.id) else { return }
+        let doc = session.document
+        for id in commentIDs {
+            guard let comment = doc.comment(id), comment.mentions.contains(me), comment.authorDeviceID != doc.deviceID,
+                  comment.createdTime > Date().addingTimeInterval(-7 * 86_400),
+                  let record = doc.record(comment.recordID) else { continue }
+            let title = doc.primaryTitle(record)
+            let link = "rowhouse://record?base=\(doc.baseID)&table=\(record.tableID)&record=\(record.id)"
+            Task {
+                await MentionNotifier.post(title: "\(comment.authorName) mentioned you", subtitle: "\(title.isEmpty ? "Unnamed record" : title) · \(doc.info.name)", body: comment.text, link: link)
+            }
         }
     }
 
@@ -88,7 +114,7 @@ final class AppModel {
             session.document.apply(template: template, storage: session.storage)
             session.writeSnapshotNow()
             sessions[entry.baseID] = session
-            engines[entry.baseID] = AutomationEngine(session: session, services: services)
+            startServices(for: session)
             return entry.baseID
         } catch {
             alert = AppAlert(title: "Couldn't create the base", message: error.localizedDescription)
@@ -113,9 +139,7 @@ final class AppModel {
     /// Starts automations for a base created by an importer, once it has been filled.
     func finishImport(_ session: BaseSession) {
         session.writeSnapshotNow()
-        if engines[session.id] == nil {
-            engines[session.id] = AutomationEngine(session: session, services: services)
-        }
+        if engines[session.id] == nil { startServices(for: session) }
     }
 
     /// Creates a base holding one table imported from CSV.
@@ -135,7 +159,7 @@ final class AppModel {
             doc.undoManager = manager
             session.writeSnapshotNow()
             sessions[entry.baseID] = session
-            engines[entry.baseID] = AutomationEngine(session: session, services: services)
+            startServices(for: session)
             return entry.baseID
         } catch {
             alert = AppAlert(title: "Couldn't import the CSV", message: error.localizedDescription)
@@ -210,7 +234,7 @@ final class AppModel {
             defer { loading.remove(entry.baseID) }
             let session = try await BaseSession.open(entry: entry, identity: identity)
             sessions[entry.baseID] = session
-            engines[entry.baseID] = AutomationEngine(session: session, services: services)
+            startServices(for: session)
             return entry.baseID
         } catch {
             alert = AppAlert(title: "Couldn't restore the backup", message: error.localizedDescription)

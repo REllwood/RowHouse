@@ -445,3 +445,37 @@ struct ConditionalRelationTests {
         #expect(doc.value(try #require(doc.record(p)), lookup) == .list([.text("Design"), .text("Build"), .text("Ship")]))
     }
 }
+
+@Suite("Comment mentions") @MainActor
+struct MentionTests {
+    @Test func mentionsMatchLongestNamesAndReachOtherMacs() async throws {
+        let entry = try TestSupport.makePackage()
+        let a = try await BaseSession.open(entry: entry, identity: DeviceIdentity(id: "devA", name: "MacBook"))
+        let doc = a.document
+        let ada = doc.addPerson(name: "Ada")!
+        let adaL = doc.addPerson(name: "Ada Lovelace")!
+        let grace = doc.addPerson(name: "Grace Hopper", email: "grace@example.com")!
+        let t = doc.createTable(name: "T")
+        let r = doc.records(in: t)[0].id
+        #expect(doc.mentionedPeople(in: "Hi @ada lovelace and @Grace Hopper, cc @Ada.").map(\.id) == [adaL.id, grace.id, ada.id])
+        #expect(doc.mentionedPeople(in: "mail me at x@Ada or @Adam").isEmpty)
+        #expect(doc.mentionRanges(in: "@Ada @Ada").count == 2)
+        doc.addComment(to: r, text: "@Grace Hopper can you check this?")
+        #expect(doc.comments(for: r)[0].mentions == [grace.id])
+        a.storage.flush()
+
+        let b = try await BaseSession.open(entry: entry, identity: DeviceIdentity(id: "devB", name: "iMac"))
+        var created: [String] = []
+        let token = b.document.addObserver { created += $0.createdComments }
+        doc.addComment(to: r, text: "Thanks @Ada")
+        a.storage.flush()
+        let changes = b.storage.pollChanges()
+        for snapshot in changes.snapshots { b.document.mergeRemote(snapshot) }
+        b.document.mergeRemote(changes.ops)
+        #expect(created.count == 1)
+        #expect(b.document.comments(for: r).last?.mentions == [ada.id])
+        b.document.removeObserver(token)
+        a.close()
+        b.close()
+    }
+}

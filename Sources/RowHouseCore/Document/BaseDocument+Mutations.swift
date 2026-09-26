@@ -659,14 +659,49 @@ extension BaseDocument {
     public func addComment(to recordID: String, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        commit([Mutation(.comment, RowID.comment(), [
+        var set: [String: JSONValue] = [
             "record": .string(recordID),
             "text": .string(trimmed),
             "author": .string(deviceID),
             "authorName": .string(deviceName),
             "created": .number(Date().timeIntervalSince1970 * 1000),
             "_deleted": .bool(false),
-        ])], actionName: "Add Comment")
+        ]
+        let mentioned = mentionedPeople(in: trimmed)
+        if !mentioned.isEmpty { set["mentions"] = .array(mentioned.map { .string($0.id) }) }
+        commit([Mutation(.comment, RowID.comment(), set)], actionName: "Add Comment")
+    }
+
+    /// People named with "@Name" in `text`, matching the longest collaborator name (ignoring case).
+    public func mentionedPeople(in text: String) -> [Person] {
+        var seen: Set<String> = []
+        return mentionRanges(in: text).map(\.person).filter { seen.insert($0.id).inserted }
+    }
+
+    /// Where each @mention sits in `text`, for highlighting.
+    public func mentionRanges(in text: String) -> [(range: Range<String.Index>, person: Person)] {
+        let candidates = people.filter { !$0.displayName.isEmpty }.sorted { $0.displayName.count > $1.displayName.count }
+        guard !candidates.isEmpty else { return [] }
+        var found: [(Range<String.Index>, Person)] = []
+        var index = text.startIndex
+        while let at = text[index...].firstIndex(of: "@") {
+            let start = text.index(after: at)
+            let precededByWord = at > text.startIndex && (text[text.index(before: at)].isLetter || text[text.index(before: at)].isNumber)
+            var matched = false
+            if !precededByWord {
+                for person in candidates {
+                    guard let end = text.index(start, offsetBy: person.displayName.count, limitedBy: text.endIndex),
+                          text[start..<end].caseInsensitiveCompare(person.displayName) == .orderedSame else { continue }
+                    if end < text.endIndex, text[end].isLetter || text[end].isNumber { continue }
+                    found.append((at..<end, person))
+                    index = end
+                    matched = true
+                    break
+                }
+            }
+            if !matched { index = start }
+        }
+        return found
     }
 
     public func deleteComment(_ id: String) {
