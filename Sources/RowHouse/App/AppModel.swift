@@ -281,6 +281,7 @@ final class WindowState {
     var trashBase: BaseSheetTarget?
     var scriptBase: BaseSheetTarget?
     var findReplaceTable: BaseSheetTarget?
+    var searchBase: BaseSheetTarget?
     /// Values to pre-fill in a form view, from a rowhouse://form link (view id → field name → text).
     var formPrefill: [String: [String: String]] = [:]
 

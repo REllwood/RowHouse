@@ -33,6 +33,9 @@ struct MainWindow: View {
         .sheet(item: $state.scriptBase) { target in
             if let session = app.session(target.baseID) { ScriptConsoleSheet(session: session) }
         }
+        .sheet(item: $state.searchBase) { target in
+            if let session = app.session(target.baseID) { BaseSearchSheet(session: session, state: state) }
+        }
         .sheet(item: $state.findReplaceTable) { target in
             if let session = app.session(target.baseID), let tableID = target.tableID {
                 let view = state.currentView(for: tableID, in: session.document)

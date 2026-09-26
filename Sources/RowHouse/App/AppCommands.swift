@@ -46,7 +46,7 @@ struct AppCommands: Commands {
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(currentBase == nil)
             Divider()
-            Button("Import CSV…") { window?.csvImportSheet = true }
+            Button("Import Spreadsheet (Excel or CSV)…") { window?.csvImportSheet = true }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(window == nil)
             Button("Import from Airtable…") { window?.airtableImportSheet = true }
@@ -79,6 +79,13 @@ struct AppCommands: Commands {
             Button("Search Records") { grid?.focusSearch() }
                 .keyboardShortcut("f", modifiers: [.command])
                 .disabled(grid == nil)
+            Button("Search Base…") {
+                MainActor.assumeIsolated {
+                    if let base = window?.destination?.baseID { window?.searchBase = BaseSheetTarget(baseID: base) }
+                }
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .disabled(window?.destination == nil)
             Button("Find and Replace…") { findReplace() }
                 .keyboardShortcut("f", modifiers: [.command, .option])
                 .disabled(currentTable == nil)

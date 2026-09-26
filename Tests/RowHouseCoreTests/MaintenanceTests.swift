@@ -159,3 +159,19 @@ struct LockedViewTests {
         #expect(doc.view(v)!.config.sorts?.count == 1)
     }
 }
+
+@Suite("Base search") @MainActor
+struct BaseSearchTests {
+    @Test func findsRecordsAcrossTables() {
+        let doc = TestSupport.document()
+        let a = doc.createTable(name: "Clients", starterFields: false, emptyRecords: 0)
+        let b = doc.createTable(name: "Notes", starterFields: false, emptyRecords: 0)
+        doc.createRecord(in: a, values: [doc.primaryField(of: a)!.id: "Café Olé"])
+        let notes = doc.createField(in: b, name: "Body", type: .multilineText)
+        doc.createRecord(in: b, values: [doc.primaryField(of: b)!.id: "Meeting", notes: "Discussed the cafe opening in March"])
+        let hits = doc.search("CAFE")
+        #expect(hits.map(\.title).sorted() == ["Café Olé", "Meeting"])
+        #expect(hits.first { $0.title == "Meeting" }?.fieldName == "Body")
+        #expect(doc.search("   ").isEmpty)
+    }
+}

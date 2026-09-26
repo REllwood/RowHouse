@@ -266,3 +266,40 @@ extension BaseDocument {
         CellFormatter.string(compute.valueForStored(value, field: field), field: field)
     }
 }
+
+// MARK: - Base-wide search
+
+public struct BaseSearchHit: Identifiable, Hashable, Sendable {
+    public var id: String { recordID }
+    public var recordID: String
+    public var tableID: String
+    public var title: String
+    /// The field where the text was found and a short excerpt around it.
+    public var fieldName: String
+    public var excerpt: String
+}
+
+extension BaseDocument {
+    /// Finds records in every table whose values contain `query` (case- and diacritic-insensitive).
+    public func search(_ query: String, limit: Int = 200) -> [BaseSearchHit] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        var hits: [BaseSearchHit] = []
+        for table in tables {
+            let fields = fields(in: table.id).filter { $0.type != .button && $0.type != .attachment }
+            for r in records(in: table.id) {
+                for f in fields {
+                    let text = displayString(r, f)
+                    guard let range = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
+                    let start = text.index(range.lowerBound, offsetBy: -30, limitedBy: text.startIndex) ?? text.startIndex
+                    let end = text.index(range.upperBound, offsetBy: 50, limitedBy: text.endIndex) ?? text.endIndex
+                    let excerpt = (start > text.startIndex ? "…" : "") + text[start..<end].replacingOccurrences(of: "\n", with: " ") + (end < text.endIndex ? "…" : "")
+                    hits.append(BaseSearchHit(recordID: r.id, tableID: table.id, title: primaryTitle(r), fieldName: f.name, excerpt: excerpt))
+                    break
+                }
+                if hits.count >= limit { return hits }
+            }
+        }
+        return hits
+    }
+}

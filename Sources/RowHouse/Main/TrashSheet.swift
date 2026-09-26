@@ -245,3 +245,73 @@ struct ScriptConsoleSheet: View {
         }
     }
 }
+
+/// Search every table in a base at once.
+struct BaseSearchSheet: View {
+    let session: BaseSession
+    var state: WindowState
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let document = session.document
+        let hits = document.search(query)
+        let grouped = Dictionary(grouping: hits, by: \.tableID)
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Search \(document.info.name)", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .font(.title3)
+                .focused($focused)
+                .onSubmit { if let first = hits.first { open(first) } }
+            if query.isEmpty {
+                Text("Find records in every table by any value.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if hits.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else {
+                List {
+                    ForEach(document.tables.filter { grouped[$0.id] != nil }) { table in
+                        Section("\(table.name) · \(grouped[table.id]?.count ?? 0)") {
+                            ForEach(grouped[table.id] ?? []) { hit in
+                                Button {
+                                    open(hit)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(hit.title).font(.body.weight(.medium))
+                                        Text("\(hit.fieldName): \(hit.excerpt)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+            HStack {
+                Text(hits.count >= 200 ? "Showing the first 200 matches" : "").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 620, height: 520)
+        .onAppear { focused = true }
+    }
+
+    private func open(_ hit: BaseSearchHit) {
+        dismiss()
+        state.destination = .table(base: session.id, table: hit.tableID)
+        let siblings = session.document.records(in: hit.tableID).map(\.id)
+        DispatchQueue.main.async {
+            state.expandedRecord = ExpandedRecord(baseID: session.id, recordID: hit.recordID, siblings: siblings)
+        }
+    }
+}

@@ -13,6 +13,8 @@ struct CSVImportSheet: View {
 
     @State private var fileURL: URL?
     @State private var rows: [[String]] = []
+    @State private var sheets: [XLSXReader.Sheet] = []
+    @State private var sheetName = ""
     @State private var hasHeader = true
     @State private var plan: [CSVColumnPlan] = []
     @State private var destination: Destination = .newBase
@@ -24,11 +26,11 @@ struct CSVImportSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Import CSV").font(.title2.bold())
+            Text("Import a spreadsheet").font(.title2.bold())
             if rows.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "tablecells.badge.ellipsis").font(.system(size: 40)).foregroundStyle(.secondary)
-                    Text("Choose a CSV or TSV file exported from Airtable, Numbers, Excel or Google Sheets.")
+                    Text("Choose an Excel workbook (.xlsx) or a CSV/TSV file exported from Airtable, Numbers or Google Sheets.")
                         .foregroundStyle(.secondary)
                     Button("Choose File…", action: pick).buttonStyle(.borderedProminent)
                 }
@@ -65,6 +67,16 @@ struct CSVImportSheet: View {
                 Label(fileURL?.lastPathComponent ?? "", systemImage: "doc.text")
                 Spacer()
                 Button("Choose Another…", action: pick).controlSize(.small)
+            }
+            if sheets.count > 1 {
+                Picker("Worksheet", selection: $sheetName) {
+                    ForEach(sheets) { Text("\($0.name) (\(max(0, $0.rows.count - 1)) rows)").tag($0.name) }
+                }
+                .frame(maxWidth: 360)
+                .onChange(of: sheetName) { _, name in
+                    guard let sheet = sheets.first(where: { $0.name == name }) else { return }
+                    load(rows: sheet.rows, name: name)
+                }
             }
             Toggle("First row contains field names", isOn: $hasHeader)
                 .onChange(of: hasHeader) { _, _ in plan = CSVImporter.plan(rows: rows, hasHeader: hasHeader) }
@@ -125,22 +137,37 @@ struct CSVImportSheet: View {
 
     private func pick() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText, .text]
+        var types: [UTType] = [.commaSeparatedText, .tabSeparatedText, .plainText, .text]
+        if let xlsx = UTType(filenameExtension: "xlsx") { types.insert(xlsx, at: 0) }
+        panel.allowedContentTypes = types
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let data = try Data(contentsOf: url)
-            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            let parsed = CSV.parse(text, delimiter: url.pathExtension.lowercased() == "tsv" ? "\t" : nil)
-            guard !parsed.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
             fileURL = url
-            rows = parsed
-            plan = CSVImporter.plan(rows: parsed, hasHeader: hasHeader)
-            name = url.deletingPathExtension().lastPathComponent
+            if url.pathExtension.lowercased() == "xlsx" {
+                let workbook = try XLSXReader.read(url)
+                sheets = workbook.filter { !$0.rows.isEmpty }
+                guard let first = sheets.first else { throw CocoaError(.fileReadCorruptFile) }
+                sheetName = first.name
+                load(rows: first.rows, name: sheets.count > 1 ? first.name : url.deletingPathExtension().lastPathComponent)
+            } else {
+                sheets = []
+                let data = try Data(contentsOf: url)
+                let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+                let parsed = CSV.parse(text, delimiter: url.pathExtension.lowercased() == "tsv" ? "\t" : nil)
+                guard !parsed.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+                load(rows: parsed, name: url.deletingPathExtension().lastPathComponent)
+            }
             error = nil
-            autoMatch(destination)
         } catch {
             self.error = "Couldn't read that file: \(error.localizedDescription)"
         }
+    }
+
+    private func load(rows parsed: [[String]], name newName: String) {
+        rows = parsed
+        plan = CSVImporter.plan(rows: parsed, hasHeader: hasHeader)
+        name = newName
+        autoMatch(destination)
     }
 
     private func autoMatch(_ dest: Destination) {
