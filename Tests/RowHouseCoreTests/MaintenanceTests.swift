@@ -197,3 +197,56 @@ struct RecordTemplateTests {
         #expect(doc.table(t)!.recordTemplates.isEmpty)
     }
 }
+
+@Suite("Duplicates") @MainActor
+struct DuplicateTests {
+    @Test func findsAndMergesDuplicateRecords() {
+        let doc = TestSupport.document()
+        let companies = doc.createTable(name: "Companies", starterFields: false, emptyRecords: 0)
+        let contacts = doc.createTable(name: "Contacts", starterFields: false, emptyRecords: 0)
+        let name = doc.primaryField(of: contacts)!.id
+        let email = doc.createField(in: contacts, name: "Email", type: .email)
+        let phone = doc.createField(in: contacts, name: "Phone", type: .phoneNumber)
+        var tagOptions = FieldOptions()
+        tagOptions.choices = [SelectChoice(name: "VIP", color: .red), SelectChoice(name: "Lead", color: .blue)]
+        let tags = doc.createField(in: contacts, name: "Tags", type: .multipleSelects, options: tagOptions)
+        let vip = doc.field(tags)!.choice(named: "VIP")!.id
+        let lead = doc.field(tags)!.choice(named: "Lead")!.id
+        var linkOptions = FieldOptions()
+        linkOptions.linkedTableID = companies
+        let company = doc.createField(in: contacts, name: "Company", type: .link, options: linkOptions)
+        let inverse = doc.field(company)!.options.inverseFieldID!
+        let acme = doc.createRecord(in: companies, values: [doc.primaryField(of: companies)!.id: "Acme"])
+        let globex = doc.createRecord(in: companies, values: [doc.primaryField(of: companies)!.id: "Globex"])
+
+        let a = doc.createRecord(in: contacts, values: [name: "Ada Lovelace", email: "ada@example.com", tags: [.string(vip)], company: [.string(acme)]])
+        let b = doc.createRecord(in: contacts, values: [name: "  ada   lovelace ", phone: "555-0100", tags: [.string(lead), .string(vip)], company: [.string(globex)]])
+        _ = doc.createRecord(in: contacts, values: [name: "Grace Hopper"])
+        _ = doc.createRecord(in: contacts, values: [:])
+        _ = doc.createRecord(in: contacts, values: [:])
+        doc.addComment(to: b, text: "Met at the conference")
+
+        let groups = doc.findDuplicates(in: contacts, fieldIDs: [name])
+        #expect(groups.map(\.recordIDs) == [[a, b]])
+        #expect(doc.findDuplicates(in: contacts, fieldIDs: [name], matchCase: true).isEmpty)
+        #expect(doc.findDuplicates(in: contacts, fieldIDs: [name, email]).isEmpty)
+
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        doc.undoManager = undo
+        undo.beginUndoGrouping()
+        doc.mergeRecords(keeping: a, merging: [b])
+        undo.endUndoGrouping()
+        #expect(doc.record(b) == nil)
+        let kept = doc.record(a)!
+        #expect(kept[email] == "ada@example.com")
+        #expect(kept[phone] == "555-0100")
+        #expect(kept[tags] == [.string(vip), .string(lead)])
+        #expect(kept[company] == [.string(acme), .string(globex)])
+        #expect(doc.displayString(doc.record(globex)!, doc.field(inverse)!) == "Ada Lovelace")
+        #expect(doc.comments(for: a).map(\.text) == ["Met at the conference"])
+        undo.undo()
+        #expect(doc.record(b) != nil)
+        #expect(doc.record(a)![phone] == .null)
+    }
+}

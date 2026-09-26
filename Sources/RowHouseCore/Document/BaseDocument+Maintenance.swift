@@ -302,4 +302,76 @@ extension BaseDocument {
         }
         return hits
     }
+
+    // MARK: - Duplicates
+
+    /// Records whose values in `fieldIDs` match after trimming and collapsing whitespace
+    /// (and ignoring case unless `matchCase`). Records with all of those values empty are skipped.
+    public func findDuplicates(in tableID: String, fieldIDs: [String], matchCase: Bool = false) -> [DuplicateGroup] {
+        let fields = fieldIDs.compactMap { field($0) }.filter { $0.tableID == tableID }
+        guard !fields.isEmpty else { return [] }
+        var groups: [String: [String]] = [:]
+        var order: [String] = []
+        for r in records(in: tableID) {
+            let parts = fields.map { f -> String in
+                let text = displayString(r, f).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                return matchCase ? text : text.lowercased()
+            }
+            guard parts.contains(where: { !$0.isEmpty }) else { continue }
+            let key = parts.joined(separator: "\u{1F}")
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(r.id)
+        }
+        return order.compactMap { key in
+            guard let ids = groups[key], ids.count > 1 else { return nil }
+            return DuplicateGroup(key: key.replacingOccurrences(of: "\u{1F}", with: " · "), recordIDs: ids)
+        }
+    }
+
+    /// Folds `others` into `keeperID` and moves them to the trash. Empty cells on the keeper take the
+    /// first non-empty value from the others; links, multiple selects and attachments are combined;
+    /// comments move to the keeper.
+    public func mergeRecords(keeping keeperID: String, merging others: [String]) {
+        guard let keeper = record(keeperID) else { return }
+        let merged = others.filter { $0 != keeperID }.compactMap { record($0) }.filter { $0.tableID == keeper.tableID }
+        guard !merged.isEmpty else { return }
+        let mergedIDs = Set(merged.map(\.id))
+        var values: [String: JSONValue] = [:]
+        for f in fields(in: keeper.tableID) where f.isEditable || f.isInverseLink {
+            switch f.type {
+            case .link:
+                var ids = compute.linkedRecordIDs(record: keeper, field: f)
+                for r in merged {
+                    for id in compute.linkedRecordIDs(record: r, field: f) where !ids.contains(id) { ids.append(id) }
+                }
+                ids.removeAll { mergedIDs.contains($0) }
+                if ids != compute.linkedRecordIDs(record: keeper, field: f) {
+                    values[f.id] = ids.isEmpty ? .null : .array(ids.map(JSONValue.string))
+                }
+            case .multipleSelects, .attachment:
+                var items = keeper[f.id].arrayValue ?? []
+                for r in merged {
+                    for item in r[f.id].arrayValue ?? [] where !items.contains(item) { items.append(item) }
+                }
+                if items != (keeper[f.id].arrayValue ?? []) { values[f.id] = .array(items) }
+            default:
+                guard keeper[f.id].isEmptyCell else { continue }
+                if let v = merged.lazy.map({ $0[f.id] }).first(where: { !$0.isEmptyCell }) { values[f.id] = v }
+            }
+        }
+        batch("Merge Records") {
+            if !values.isEmpty { updateRecord(keeperID, values: values, actionName: "Merge Records") }
+            let moved = merged.flatMap { comments(for: $0.id) }.map { Mutation(.comment, $0.id, ["record": .string(keeperID)]) }
+            if !moved.isEmpty { commit(moved, actionName: "Merge Records") }
+            deleteRecords(merged.map(\.id))
+        }
+    }
+}
+
+public struct DuplicateGroup: Identifiable, Hashable, Sendable {
+    public var id: String { recordIDs.joined(separator: ",") }
+    /// The matching values, for display.
+    public var key: String
+    /// In table order; the first is the suggested record to keep.
+    public var recordIDs: [String]
 }

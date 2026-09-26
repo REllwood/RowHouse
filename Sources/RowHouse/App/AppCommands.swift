@@ -90,6 +90,8 @@ struct AppCommands: Commands {
             Button("Find and Replace…") { findReplace() }
                 .keyboardShortcut("f", modifiers: [.command, .option])
                 .disabled(currentTable == nil)
+            Button("Find Duplicates…") { findDuplicates() }
+                .disabled(currentTable == nil)
         }
         CommandGroup(replacing: .help) {
             Button("RowHouse on GitHub") { NSWorkspace.shared.open(AppInfo.repository) }
@@ -112,6 +114,13 @@ struct AppCommands: Commands {
         MainActor.assumeIsolated {
             guard let current = currentTable else { return }
             window?.findReplaceTable = BaseSheetTarget(baseID: current.base, tableID: current.table)
+        }
+    }
+
+    private func findDuplicates() {
+        MainActor.assumeIsolated {
+            guard let current = currentTable else { return }
+            window?.duplicatesTable = BaseSheetTarget(baseID: current.base, tableID: current.table)
         }
     }
 

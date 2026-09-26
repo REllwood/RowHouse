@@ -42,6 +42,11 @@ struct MainWindow: View {
                 FindReplaceSheet(session: session, tableID: tableID, viewRecordIDs: view.map { session.document.evaluate(view: $0).recordIDs } ?? [])
             }
         }
+        .sheet(item: $state.duplicatesTable) { target in
+            if let session = app.session(target.baseID), let tableID = target.tableID {
+                DuplicatesSheet(session: session, tableID: tableID, state: state)
+            }
+        }
         .sheet(item: $state.expandedRecord) { expanded in
             if let session = app.session(expanded.baseID) {
                 RecordDetailSheet(session: session, expanded: expanded, state: state)
