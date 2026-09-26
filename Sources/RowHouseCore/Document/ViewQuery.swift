@@ -424,7 +424,10 @@ enum FilterEvaluator {
     /// emails written by automations and scripts).
     @MainActor
     private static func peopleCompare(_ c: FilterCondition, value: CellValue, field: FieldModel, document: BaseDocument) -> Bool {
-        let wanted = Set((c.value?.collaboratorIDs ?? []).map { key in document.person(matching: key)?.id ?? key })
+        let wanted = Set((c.value?.collaboratorIDs ?? []).compactMap { key -> String? in
+            if key == Person.meToken { return document.currentPersonID ?? key }
+            return document.person(matching: key)?.id ?? key
+        })
         let current: Set<String> = { if case .collaborators(let people) = value { return Set(people.map(\.id)) } else { return [] } }()
         switch c.op {
         case .is, .isExactly: return current == wanted

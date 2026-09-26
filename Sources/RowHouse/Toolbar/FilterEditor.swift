@@ -185,7 +185,7 @@ private struct ConditionValueEditor: View {
                 value?.collaboratorIDs ?? []
             }, set: { ids in
                 value = ids.isEmpty ? nil : .array(ids.map(JSONValue.string))
-            }), allowsMultiple: op != .is && op != .isNot)
+            }), allowsMultiple: op != .is && op != .isNot, includesMe: true)
         default:
             TextField("Enter a value", text: Binding(get: {
                 value?.stringValue ?? value?.numberValue.map { CellFormatter.number($0, precision: nil) } ?? ""

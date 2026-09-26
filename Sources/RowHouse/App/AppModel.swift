@@ -79,6 +79,7 @@ final class AppModel {
     /// Starts a base's automations and watches for comments that @mention you from other Macs.
     private func startServices(for session: BaseSession) {
         engines[session.id] = AutomationEngine(session: session, services: services)
+        session.document.currentPersonID = Me.personID(in: session.id)
         if let old = mentionObservers[session.id] { session.document.removeObserver(old) }
         mentionObservers[session.id] = session.document.addObserver { [weak self, weak session] changes in
             guard changes.origin == .remote, !changes.createdComments.isEmpty, let self, let session else { return }

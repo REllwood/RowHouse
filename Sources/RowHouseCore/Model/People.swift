@@ -26,6 +26,9 @@ public struct Person: Codable, Hashable, Sendable, Identifiable {
         color = (try? c.decodeIfPresent(ChoiceColor.self, forKey: .color)) ?? Person.color(for: id)
     }
 
+    /// Filter value meaning "whoever is marked as me on this Mac" (Airtable's current user).
+    public static let meToken = "@me"
+
     /// The name, or the email when no name was given.
     public var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

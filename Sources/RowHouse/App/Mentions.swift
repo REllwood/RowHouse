@@ -15,6 +15,7 @@ enum Me {
         var map = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
         map[baseID] = personID
         UserDefaults.standard.set(map, forKey: key)
+        MainActor.assumeIsolated { AppModel.shared.session(baseID)?.document.currentPersonID = personID }
     }
 }
 

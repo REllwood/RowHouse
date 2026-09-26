@@ -479,3 +479,21 @@ struct MentionTests {
         b.close()
     }
 }
+
+@Suite("Current user filter") @MainActor
+struct CurrentUserFilterTests {
+    @Test func meMatchesThePersonMarkedOnThisMac() {
+        let doc = TestSupport.document()
+        let ada = doc.addPerson(name: "Ada")!
+        let grace = doc.addPerson(name: "Grace")!
+        let t = doc.createTable(name: "T", starterFields: false, emptyRecords: 0)
+        let owner = doc.createField(in: t, name: "Owner", type: .collaborator)
+        let a = doc.createRecord(in: t, values: [owner: .string(ada.id)])
+        _ = doc.createRecord(in: t, values: [owner: .string(grace.id)])
+        let v = doc.views(in: t)[0].id
+        doc.updateViewConfig(v) { $0.filter = FilterGroup(conditions: [FilterCondition(fieldID: owner, op: .is, value: [.string(Person.meToken)])]) }
+        #expect(doc.evaluate(view: doc.view(v)!).recordIDs.isEmpty)
+        doc.currentPersonID = ada.id
+        #expect(doc.evaluate(view: doc.view(v)!).recordIDs == [a])
+    }
+}

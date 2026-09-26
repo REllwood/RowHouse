@@ -15,6 +15,14 @@ public final class BaseDocument {
     public private(set) var schemaRevision = 0
     /// Bumped whenever records or comments change.
     public private(set) var dataRevision = 0
+    /// The collaborator who is "you" on this Mac; filters on "@me" match them.
+    @ObservationIgnored public var currentPersonID: String? {
+        didSet {
+            guard currentPersonID != oldValue else { return }
+            compute.invalidate(schema: false)
+            dataRevision &+= 1
+        }
+    }
     public private(set) var automationRevision = 0
 
     @ObservationIgnored public let clock: HybridClock

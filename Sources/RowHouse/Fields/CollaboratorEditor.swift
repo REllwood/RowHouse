@@ -146,9 +146,27 @@ struct PeoplePickerMenu: View {
     @Binding var selected: [String]
     var allowsMultiple = true
     var placeholder = "Choose people"
+    /// Offers "Me (current user)" first, for filters.
+    var includesMe = false
 
     var body: some View {
         Menu {
+            if includesMe {
+                Button {
+                    if allowsMultiple {
+                        if let i = selected.firstIndex(of: Person.meToken) { selected.remove(at: i) } else { selected.append(Person.meToken) }
+                    } else {
+                        selected = selected == [Person.meToken] ? [] : [Person.meToken]
+                    }
+                } label: {
+                    if selected.contains(Person.meToken) {
+                        Label("Me (current user)", systemImage: "checkmark")
+                    } else {
+                        Text("Me (current user)")
+                    }
+                }
+                Divider()
+            }
             ForEach(document.people) { person in
                 Button {
                     if allowsMultiple {
@@ -168,7 +186,7 @@ struct PeoplePickerMenu: View {
                 Text("No collaborators yet")
             }
         } label: {
-            let names = selected.compactMap { document.person($0)?.displayName }
+            let names = selected.compactMap { $0 == Person.meToken ? "Me" : document.person($0)?.displayName }
             Text(names.isEmpty ? placeholder : names.joined(separator: ", "))
                 .lineLimit(1)
         }
