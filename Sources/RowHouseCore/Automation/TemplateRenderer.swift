@@ -69,7 +69,8 @@ public enum TemplateRenderer {
                 }
             } else if case .array(let arr) = node {
                 let key = remaining.split(separator: ".", maxSplits: 1).first.map(String.init) ?? ""
-                if let i = Int(key), i >= 0, i < arr.count {
+                if let i = Int(key) {
+                    guard i >= 0, i < arr.count else { return nil }
                     current = arr[i]
                     remaining = remaining.dropFirst(key.count)
                     if remaining.first == "." { remaining = remaining.dropFirst() }
@@ -78,6 +79,10 @@ public enum TemplateRenderer {
                     current = .number(Double(arr.count))
                     remaining = remaining.dropFirst(key.count)
                     matched = true
+                } else {
+                    // Anything else applies to every element: `steps.1.records.Name` lists each name.
+                    let rest = String(remaining)
+                    return .array(arr.compactMap { lookup(rest, in: $0) })
                 }
             }
             if !matched { return nil }

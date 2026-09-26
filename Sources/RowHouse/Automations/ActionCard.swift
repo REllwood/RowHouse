@@ -18,7 +18,7 @@ struct ActionCard: View {
                 AnyView(HStack(spacing: 2) {
                     Button { move(-1) } label: { Image(systemName: "arrow.up") }.disabled(index == 0)
                     Button { move(1) } label: { Image(systemName: "arrow.down") }.disabled(index == automation.actions.count - 1)
-                    Button { automation.actions.remove(at: index) } label: { Image(systemName: "trash") }
+                    Button { remove() } label: { Image(systemName: "trash") }
                 }
                 .buttonStyle(.borderless))
             }) {
@@ -26,13 +26,16 @@ struct ActionCard: View {
                     TextField("Step label (optional)", text: Binding(get: { action.wrappedValue.label ?? "" }, set: { action.wrappedValue.label = $0.isEmpty ? nil : $0 }))
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 360)
-                    ActionOptions(session: session, action: action, tokens: tokens, triggerTableID: automation.trigger.tableID)
-                    if automation.trigger.kind.providesRecord, let tableID = automation.trigger.tableID {
+                    RepeatOptions(engine: engine, automation: $automation, index: index)
+                    ActionOptions(session: session, action: action, tokens: tokens, triggerTableID: automation.trigger.tableID,
+                                  defaultRecordID: action.wrappedValue.repeatFrom == nil ? "{{trigger.record.id}}" : (itemTableID != nil ? "{{item.id}}" : "{{item}}"))
+                    if let tableID = conditionTableID {
                         DisclosureGroup(isExpanded: Binding(get: { showCondition || !(action.wrappedValue.condition?.isEmpty ?? true) }, set: { showCondition = $0 })) {
                             FilterEditor(document: document, tableID: tableID, filter: action.wrappedValue.condition ?? FilterGroup(), title: "") { action.wrappedValue.condition = $0.isEmpty ? nil : $0 }
+                                .id(tableID)
                                 .padding(.top, 6)
                         } label: {
-                            Text("Only run this step if the trigger record matches conditions")
+                            Text(itemTableID != nil ? "Only run for items whose record matches conditions" : "Only run this step if the trigger record matches conditions")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
@@ -42,10 +45,43 @@ struct ActionCard: View {
         }
     }
 
+    /// Table of the records this step repeats over, when it repeats over records.
+    private var itemTableID: String? {
+        engine.repeatItemTableID(for: automation, stepIndex: index)
+    }
+
+    /// The table step conditions are written against: the repeated records' table, else the trigger's.
+    private var conditionTableID: String? {
+        itemTableID ?? (automation.trigger.kind.providesRecord ? automation.trigger.tableID : nil)
+    }
+
     private func move(_ delta: Int) {
         let j = index + delta
         guard j >= 0, j < automation.actions.count else { return }
         automation.actions.swapAt(index, j)
+        // Keep "repeat for each" pointing at the same steps under their new numbers.
+        let a = index + 1, b = j + 1
+        for i in automation.actions.indices {
+            if automation.actions[i].repeatFrom == a {
+                automation.actions[i].repeatFrom = b
+            } else if automation.actions[i].repeatFrom == b {
+                automation.actions[i].repeatFrom = a
+            }
+        }
+    }
+
+    private func remove() {
+        let removed = index + 1
+        automation.actions.remove(at: index)
+        for i in automation.actions.indices {
+            guard let from = automation.actions[i].repeatFrom else { continue }
+            if from == removed {
+                automation.actions[i].repeatFrom = nil
+                automation.actions[i].repeatPath = nil
+            } else if from > removed {
+                automation.actions[i].repeatFrom = from - 1
+            }
+        }
     }
 
     private func tint(_ kind: ActionKind) -> Color {
@@ -57,8 +93,92 @@ struct ActionCard: View {
         case .httpRequest: .purple
         case .runScript: .indigo
         case .runShortcut: .pink
+        case .sendEmail: .cyan
         }
     }
+}
+
+/// "Repeat for each item in…": runs a step once per item of an earlier step's list.
+private struct RepeatOptions: View {
+    let engine: AutomationEngine
+    @Binding var automation: AutomationModel
+    let index: Int
+
+    var body: some View {
+        let sources = engine.repeatSources(for: automation, before: index)
+        if index < automation.actions.count, !sources.isEmpty || automation.actions[index].repeatFrom != nil {
+            let action = automation.actions[index]
+            let current = action.repeatFrom.flatMap { from in sources.first { $0.step == from } }
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Repeat for each item in", selection: Binding(get: { action.repeatFrom ?? 0 }, set: { choose($0, sources: sources) })) {
+                    Text("Don't repeat").tag(0)
+                    ForEach(sources, id: \.step) { source in
+                        Text(source.path == "records" ? "\(source.title) › Records" : source.title).tag(source.step)
+                    }
+                    if let from = action.repeatFrom, current == nil {
+                        Text("Step \(from) (unavailable)").tag(from)
+                    }
+                }
+                .frame(maxWidth: 460)
+                if let from = action.repeatFrom {
+                    if current == nil {
+                        Label("Step \(from) doesn't come before this step or has no list. Choose another list.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if current?.path == nil {
+                        HStack {
+                            Text("List in its output").font(.callout)
+                            TextField("", text: Binding(get: { action.repeatPath ?? "" }, set: { automation.actions[index].repeatPath = $0.isEmpty ? nil : $0 }),
+                                      prompt: Text(automation.actions[from - 1].kind == .httpRequest ? "json.items" : "items"))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12, design: .monospaced))
+                                .frame(width: 200)
+                        }
+                    }
+                    Text("Runs this step once per item, up to \(AutomationEngine.maxRepeatItems) per run. Use {{item}} values and {{index}} in its settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func choose(_ step: Int, sources: [AutomationEngine.RepeatSource]) {
+        var action = automation.actions[index]
+        let oldConditionTable = engine.repeatItemTableID(for: automation, stepIndex: index) ?? triggerRecordTable
+        if step == 0 {
+            action.repeatFrom = nil
+            action.repeatPath = nil
+            if Self.automaticRecordIDs.contains(action.recordIDTemplate ?? "") {
+                action.recordIDTemplate = triggerRecordTable == nil ? nil : "{{trigger.record.id}}"
+            }
+        } else {
+            let source = sources.first { $0.step == step }
+            action.repeatFrom = step
+            action.repeatPath = source?.path
+            if action.kind == .updateRecord || action.kind == .deleteRecord {
+                // Point the step at each item rather than the trigger record, unless it was customised.
+                if Self.automaticRecordIDs.contains(action.recordIDTemplate ?? "") {
+                    action.recordIDTemplate = source?.tableID != nil ? "{{item.id}}" : "{{item}}"
+                }
+                if action.kind == .updateRecord, let tableID = source?.tableID, action.tableID != tableID, action.fieldValues?.isEmpty ?? true {
+                    action.tableID = tableID
+                }
+            }
+        }
+        automation.actions[index] = action
+        // Conditions name fields of one table; drop them when they'd now apply to another table's records.
+        let newConditionTable = engine.repeatItemTableID(for: automation, stepIndex: index) ?? triggerRecordTable
+        if newConditionTable != oldConditionTable { automation.actions[index].condition = nil }
+    }
+
+    private var triggerRecordTable: String? {
+        automation.trigger.kind.providesRecord ? automation.trigger.tableID : nil
+    }
+
+    /// Record ID settings that just follow the trigger or the item, which switching lists may replace.
+    private static let automaticRecordIDs: Set<String> = ["", "{{trigger.record.id}}", "{{item.id}}", "{{item}}"]
 }
 
 private struct ActionOptions: View {
@@ -66,6 +186,7 @@ private struct ActionOptions: View {
     @Binding var action: AutomationAction
     let tokens: [TemplateRenderer.Token]
     let triggerTableID: String?
+    let defaultRecordID: String
     @State private var shortcuts: [String] = []
 
     private var document: BaseDocument { session.document }
@@ -75,13 +196,13 @@ private struct ActionOptions: View {
         case .createRecord, .updateRecord:
             tablePicker
             if action.kind == .updateRecord {
-                TemplateField(title: "Record ID", text: Binding(get: { action.recordIDTemplate ?? "{{trigger.record.id}}" }, set: { action.recordIDTemplate = $0 }), tokens: tokens)
+                TemplateField(title: "Record ID", text: Binding(get: { action.recordIDTemplate ?? defaultRecordID }, set: { action.recordIDTemplate = $0 }), tokens: tokens)
             }
             if let tableID = action.tableID {
                 FieldValuesEditor(document: document, tableID: tableID, values: Binding(get: { action.fieldValues ?? [:] }, set: { action.fieldValues = $0.isEmpty ? nil : $0 }), tokens: tokens)
             }
         case .deleteRecord:
-            TemplateField(title: "Record ID", text: Binding(get: { action.recordIDTemplate ?? "{{trigger.record.id}}" }, set: { action.recordIDTemplate = $0 }), tokens: tokens)
+            TemplateField(title: "Record ID", text: Binding(get: { action.recordIDTemplate ?? defaultRecordID }, set: { action.recordIDTemplate = $0 }), tokens: tokens)
         case .findRecords:
             tablePicker
             if let tableID = action.tableID {
@@ -138,6 +259,18 @@ private struct ActionOptions: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .task { shortcuts = await SystemAutomationServices.shortcutNames() }
+        case .sendEmail:
+            TemplateField(title: "To", text: Binding(get: { action.to ?? "" }, set: { action.to = $0 }), tokens: tokens, prompt: "name@example.com, another@example.com")
+            HStack(alignment: .top) {
+                TemplateField(title: "Cc", text: Binding(get: { action.cc ?? "" }, set: { action.cc = $0.isEmpty ? nil : $0 }), tokens: tokens)
+                TemplateField(title: "Bcc", text: Binding(get: { action.bcc ?? "" }, set: { action.bcc = $0.isEmpty ? nil : $0 }), tokens: tokens)
+            }
+            TemplateField(title: "Subject", text: Binding(get: { action.subject ?? "" }, set: { action.subject = $0 }), tokens: tokens)
+            TemplateField(title: "Message", text: Binding(get: { action.body ?? "" }, set: { action.body = $0 }), tokens: tokens, multiline: true)
+            Text("Sent from your default account in the Mail app. Separate addresses with commas. The first time, macOS asks whether RowHouse may control Mail.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
