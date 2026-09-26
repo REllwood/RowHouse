@@ -474,6 +474,7 @@ public final class BaseDocument {
         if let c = e["color"]?.stringValue, let color = ChoiceColor(rawValue: c) { info.color = color }
         info.description = e["description"]?.stringValue ?? ""
         info.automationHostDeviceID = e["automationHost"]?.stringValue
+        info.people = e["people"]?.decode([Person].self) ?? []
         return info
     }
 

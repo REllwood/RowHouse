@@ -8,6 +8,8 @@ struct FilterEditor: View {
     let tableID: String
     @State var filter: FilterGroup
     var title: String = "Filter"
+    /// Report every edit straight away instead of after a pause in typing.
+    var immediate = false
     let onChange: (FilterGroup) -> Void
     @State private var pending: Task<Void, Never>?
 
@@ -20,6 +22,10 @@ struct FilterEditor: View {
         .frame(minWidth: 560, alignment: .leading)
         .onChange(of: filter) { _, new in
             pending?.cancel()
+            if immediate {
+                onChange(new)
+                return
+            }
             pending = Task {
                 try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
@@ -76,7 +82,7 @@ private struct FilterGroupEditor: View {
             HStack(spacing: 14) {
                 Button {
                     if let f = fields.first {
-                        let op = FilterOperator.available(for: f.type).first ?? .contains
+                        let op = FilterOperator.available(for: f).first ?? .contains
                         group.conditions.append(FilterCondition(fieldID: f.id, op: op, value: f.type == .checkbox ? .bool(true) : nil))
                     }
                 } label: {
@@ -120,12 +126,12 @@ private struct ConditionRow: View {
 
     var body: some View {
         let field = document.field(condition.fieldID)
-        let ops = FilterOperator.available(for: field?.type ?? .singleLineText)
+        let ops = field.map { FilterOperator.available(for: $0) } ?? FilterOperator.available(for: .singleLineText)
         HStack(spacing: 6) {
             Picker("", selection: Binding(get: { condition.fieldID }, set: { id in
                 condition.fieldID = id
                 let type = document.field(id)?.type ?? .singleLineText
-                let available = FilterOperator.available(for: type)
+                let available = document.field(id).map { FilterOperator.available(for: $0) } ?? FilterOperator.available(for: type)
                 if !available.contains(condition.op) { condition.op = available.first ?? .contains }
                 condition.value = type == .checkbox ? .bool(true) : nil
             })) {
@@ -139,7 +145,7 @@ private struct ConditionRow: View {
             .labelsHidden()
             .frame(width: 130)
             if let field, condition.op.needsValue || field.type == .checkbox {
-                ConditionValueEditor(field: field, op: condition.op, value: $condition.value)
+                ConditionValueEditor(document: document, field: field, op: condition.op, value: $condition.value)
                     .frame(minWidth: 160)
             } else {
                 Spacer().frame(minWidth: 160)
@@ -153,6 +159,7 @@ private struct ConditionRow: View {
 }
 
 private struct ConditionValueEditor: View {
+    let document: BaseDocument
     let field: FieldModel
     let op: FilterOperator
     @Binding var value: JSONValue?
@@ -173,6 +180,12 @@ private struct ConditionValueEditor: View {
             }), allowsMultiple: op != .is && op != .isNot || field.type == .multipleSelects)
         case .date, .createdTime, .lastModifiedTime:
             DateConditionEditor(op: op, value: $value)
+        case .collaborator:
+            PeoplePickerMenu(document: document, selected: Binding(get: {
+                value?.collaboratorIDs ?? []
+            }, set: { ids in
+                value = ids.isEmpty ? nil : .array(ids.map(JSONValue.string))
+            }), allowsMultiple: op != .is && op != .isNot)
         default:
             TextField("Enter a value", text: Binding(get: {
                 value?.stringValue ?? value?.numberValue.map { CellFormatter.number($0, precision: nil) } ?? ""

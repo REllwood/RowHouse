@@ -18,6 +18,8 @@ public indirect enum CellValue: Hashable, Sendable {
     case choices([SelectChoice])
     case attachments([AttachmentInfo])
     case links([LinkedRecordRef])
+    /// Collaborators, or the Mac that created or last edited a record.
+    case collaborators([Person])
     case list([CellValue])
     case error(String)
 
@@ -29,6 +31,7 @@ public indirect enum CellValue: Hashable, Sendable {
         case .choices(let c): return c.isEmpty
         case .attachments(let a): return a.isEmpty
         case .links(let l): return l.isEmpty
+        case .collaborators(let p): return p.isEmpty
         case .list(let items): return items.allSatisfy(\.isEmpty)
         default: return false
         }
@@ -72,6 +75,7 @@ public indirect enum CellValue: Hashable, Sendable {
         case .choices(let c): return .array(c.map { .text($0.name) })
         case .attachments(let a): return .array(a.map { .text($0.filename) })
         case .links(let l): return .array(l.map { .text($0.title) })
+        case .collaborators(let p): return p.count == 1 ? .text(p[0].displayName) : .array(p.map { .text($0.displayName) })
         case .list(let items): return .array(items.map(\.formulaValue))
         case .error(let m): return .error(FormulaError(m))
         }

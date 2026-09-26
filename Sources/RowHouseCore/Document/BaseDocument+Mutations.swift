@@ -123,6 +123,11 @@ extension BaseDocument {
                 for (old, new) in fieldMap { formula = formula.replacingOccurrences(of: "{\(old)}", with: "{\(new)}") }
                 options.formula = formula
             }
+            if var prompt = options.aiPrompt {
+                for (old, new) in fieldMap { prompt = prompt.replacingOccurrences(of: "{\(old)}", with: "{\(new)}") }
+                options.aiPrompt = prompt
+            }
+            options.watchedFieldIDs = options.watchedFieldIDs?.compactMap { fieldMap[$0] }
             mutations.append(fieldMutation(id: fieldMap[f.id]!, tableID: newTableID, name: f.name, type: type, options: options, order: f.order, description: f.description))
         }
         for v in views(in: id) {
@@ -241,6 +246,8 @@ extension BaseDocument {
         if let description { set["description"] = .string(description) }
         let targetType = newType ?? field.type
         var options = newOptions ?? field.options
+        // A default value belongs to the type it was chosen for.
+        if targetType != field.type, options.defaultValue == field.options.defaultValue { options.defaultValue = nil }
         options = normalizedOptions(options, for: targetType, tableID: field.tableID)
 
         if targetType != field.type || newOptions != nil {
@@ -381,9 +388,13 @@ extension BaseDocument {
             if o.buttonAction == nil { o.buttonAction = .openURL }
         case .formula:
             if let formula = o.formula { o.formula = formulaWithFieldIDs(formula, tableID: tableID) }
+        case .aiText:
+            if let prompt = o.aiPrompt { o.aiPrompt = aiPromptWithFieldIDs(prompt, tableID: tableID) }
+            if o.aiModel?.trimmingCharacters(in: .whitespaces).isEmpty == true { o.aiModel = nil }
         default:
             break
         }
+        if !type.supportsDefaultValue || o.defaultValue?.isNull == true { o.defaultValue = nil }
         if type == .button, let formula = o.buttonURLFormula { o.buttonURLFormula = formulaWithFieldIDs(formula, tableID: tableID) }
         return o
     }
@@ -480,14 +491,15 @@ extension BaseDocument {
     // MARK: - Records
 
     /// Creates a record. `values` maps field ids to stored JSON; edits to inverse link fields are
-    /// translated onto the owning side.
+    /// translated onto the owning side. Fields missing from `values` get their default value unless
+    /// `applyingDefaults` is false.
     @discardableResult
-    public func createRecord(in tableID: String, values: [String: JSONValue] = [:], after afterID: String? = nil, origin: ChangeOrigin = .local) -> String {
-        createRecords(in: tableID, values: [values], after: afterID, origin: origin).first ?? ""
+    public func createRecord(in tableID: String, values: [String: JSONValue] = [:], after afterID: String? = nil, origin: ChangeOrigin = .local, applyingDefaults: Bool = true) -> String {
+        createRecords(in: tableID, values: [values], after: afterID, origin: origin, applyingDefaults: applyingDefaults).first ?? ""
     }
 
     @discardableResult
-    public func createRecords(in tableID: String, values: [[String: JSONValue]], after afterID: String? = nil, origin: ChangeOrigin = .local) -> [String] {
+    public func createRecords(in tableID: String, values: [[String: JSONValue]], after afterID: String? = nil, origin: ChangeOrigin = .local, applyingDefaults: Bool = true) -> [String] {
         let existing = records(in: tableID)
         var start = (existing.last?.order ?? 0) + 1
         var step = 1.0
@@ -497,7 +509,9 @@ extension BaseDocument {
             step = (upper - lower) / Double(values.count + 1)
             start = lower + step
         }
-        let now = Date().timeIntervalSince1970 * 1000
+        let date = Date()
+        let now = date.timeIntervalSince1970 * 1000
+        let defaults = applyingDefaults ? defaultValues(in: tableID, now: date) : [:]
         var ids: [String] = []
         var mutations: [Mutation] = []
         var work = InverseLinkWork()
@@ -510,6 +524,8 @@ extension BaseDocument {
                 "_created": .number(now),
                 "_deleted": .bool(false),
             ]
+            var vals = vals
+            for (fieldID, value) in defaults where vals[fieldID] == nil { vals[fieldID] = value }
             set.merge(splitInverseLinkWrites(recordID: id, values: vals, isNew: true, work: &work)) { _, new in new }
             mutations.append(Mutation(.record, id, set))
         }
@@ -550,7 +566,7 @@ extension BaseDocument {
                     let linked = compute.linkedRecordIDs(record: r, field: f)
                     if !linked.isEmpty { values[f.id] = .array(linked.map(JSONValue.string)) }
                 }
-                newIDs.append(createRecord(in: r.tableID, values: values, after: id))
+                newIDs.append(createRecord(in: r.tableID, values: values, after: id, applyingDefaults: false))
             }
         }
         return newIDs
@@ -567,7 +583,13 @@ extension BaseDocument {
     public func setCell(recordID: String, fieldID: String, text: String, origin: ChangeOrigin = .local) {
         guard let field = field(fieldID), field.isEditable else { return }
         batch("Edit Cell", origin: origin) {
-            let value = parseValue(text, for: field, createMissingChoices: true)
+            var value = parseValue(text, for: field, createMissingChoices: true)
+            // Retyping a barcode's text keeps its symbology.
+            if field.type == .barcode, var edited = BarcodeValue(json: value),
+               let existing = record(recordID).flatMap({ BarcodeValue(json: $0[fieldID]) }) {
+                edited.type = existing.type
+                value = edited.json
+            }
             updateRecord(recordID, values: [fieldID: value], actionName: "Edit Cell", origin: origin)
         }
     }

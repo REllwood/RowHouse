@@ -374,6 +374,11 @@ enum ScriptValues {
         case .choices(let cs): return .array(cs.map { .object(["id": .string($0.id), "name": .string($0.name), "color": .string($0.color.rawValue)]) })
         case .attachments(let atts): return .array(atts.map { .object(["id": .string($0.id), "filename": .string($0.filename), "size": .number(Double($0.size)), "type": .string($0.mimeType)]) })
         case .links(let refs): return .array(refs.map { .object(["id": .string($0.id), "name": .string($0.title)]) })
+        case .collaborators(let people):
+            let objects: [JSONValue] = people.map { .object(["id": .string($0.id), "name": .string($0.displayName), "email": .string($0.email)]) }
+            let single = field.type == .createdBy || field.type == .lastModifiedBy
+                || (field.type == .collaborator && field.options.allowMultipleCollaborators != true)
+            return single && objects.count == 1 ? objects[0] : .array(objects)
         case .list(let items): return .array(items.map { jsValue($0, field: field, document: document) })
         case .error(let m): return .object(["error": .string(m)])
         }
@@ -438,6 +443,19 @@ enum ScriptValues {
             return .success(ids.isEmpty ? .null : .array(ids.map(JSONValue.string)))
         case .attachment:
             return .failure(Failure(message: "Attachments can't be set from scripts"))
+        case .collaborator:
+            var ids: [String] = []
+            for item in value.arrayValue ?? [value] {
+                let key = item["id"]?.stringValue ?? item["email"]?.stringValue ?? item["name"]?.stringValue ?? item.stringValue ?? ""
+                guard let person = document.person(matching: key) else {
+                    return .failure(Failure(message: "\(field.name): no collaborator matches “\(key)”"))
+                }
+                if !ids.contains(person.id) { ids.append(person.id) }
+            }
+            return .success(document.storedCollaborators(ids, field: field))
+        case .barcode:
+            guard let barcode = BarcodeValue(json: value) else { return .failure(Failure(message: "\(field.name) expects barcode text")) }
+            return .success(barcode.json)
         default:
             return .success(document.parseValue(TemplateRenderer.string(value), for: field, createMissingChoices: true))
         }

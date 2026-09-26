@@ -150,7 +150,7 @@ public struct FindReplaceOptions: Sendable, Equatable {
 }
 
 extension BaseDocument {
-    public static let findReplaceTypes: Set<FieldType> = [.singleLineText, .multilineText, .email, .url, .phoneNumber]
+    public static let findReplaceTypes: Set<FieldType> = [.singleLineText, .multilineText, .email, .url, .phoneNumber, .aiText]
 
     /// Counts matching cells without changing anything.
     public func countMatches(_ options: FindReplaceOptions, recordIDs: [String], fieldIDs: [String]) -> Int {
@@ -348,6 +348,12 @@ extension BaseDocument {
                 if ids != compute.linkedRecordIDs(record: keeper, field: f) {
                     values[f.id] = ids.isEmpty ? .null : .array(ids.map(JSONValue.string))
                 }
+            case .collaborator where f.options.allowMultipleCollaborators == true:
+                var ids = keeper[f.id].collaboratorIDs
+                for r in merged {
+                    for id in r[f.id].collaboratorIDs where !ids.contains(id) { ids.append(id) }
+                }
+                if ids != keeper[f.id].collaboratorIDs { values[f.id] = .array(ids.map(JSONValue.string)) }
             case .multipleSelects, .attachment:
                 var items = keeper[f.id].arrayValue ?? []
                 for r in merged {
