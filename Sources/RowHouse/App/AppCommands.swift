@@ -67,7 +67,7 @@ struct AppCommands: Commands {
                 .disabled(grid == nil)
             Divider()
             Button("Add Field") { grid?.addField() }
-                .keyboardShortcut("f", modifiers: [.command, .option])
+                .keyboardShortcut("n", modifiers: [.command, .option])
                 .disabled(grid == nil)
         }
         CommandGroup(after: .sidebar) {
@@ -79,6 +79,9 @@ struct AppCommands: Commands {
             Button("Search Records") { grid?.focusSearch() }
                 .keyboardShortcut("f", modifiers: [.command])
                 .disabled(grid == nil)
+            Button("Find and Replace…") { findReplace() }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(currentTable == nil)
         }
         CommandGroup(replacing: .help) {
             Button("RowHouse on GitHub") { NSWorkspace.shared.open(AppInfo.repository) }
@@ -90,6 +93,18 @@ struct AppCommands: Commands {
 
     private var currentBase: BaseSession? {
         MainActor.assumeIsolated { AppModel.shared.session(window?.destination?.baseID) }
+    }
+
+    private var currentTable: (base: String, table: String)? {
+        guard case .table(let base, let table)? = window?.destination else { return nil }
+        return (base, table)
+    }
+
+    private func findReplace() {
+        MainActor.assumeIsolated {
+            guard let current = currentTable else { return }
+            window?.findReplaceTable = BaseSheetTarget(baseID: current.base, tableID: current.table)
+        }
     }
 
     private func newTable() {

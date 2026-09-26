@@ -21,11 +21,14 @@ struct ViewBar: View {
                 Button("Duplicate View") {
                     if let id = document.duplicateView(view.id) { state.viewForTable[view.tableID] = id }
                 }
+                Button(view.config.isLocked ? "Unlock View" : "Lock View") {
+                    document.updateViewConfig(view.id, actionName: view.config.isLocked ? "Unlock View" : "Lock View") { $0.locked = view.config.isLocked ? nil : true }
+                }
                 Divider()
                 Button("Delete View", role: .destructive) { document.deleteView(view.id) }
                     .disabled(document.views(in: view.tableID).count <= 1)
             } label: {
-                Label(view.name, systemImage: view.type.symbolName)
+                Label(view.name, systemImage: view.config.isLocked ? "lock.fill" : view.type.symbolName)
                     .font(.system(size: 12, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
@@ -34,7 +37,14 @@ struct ViewBar: View {
 
             Divider().frame(height: 16)
 
+            if view.config.isLocked {
+                Label("Locked", systemImage: "lock")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .help("This view's filters, sorts, grouping and fields are locked. Unlock it from the view menu.")
+            }
             if view.type != .form {
+                Group {
                 if view.type != .chart {
                     BarButton(title: hiddenTitle, systemImage: "eye.slash", active: !(view.config.hiddenFieldIDs ?? []).isEmpty) {
                         HideFieldsEditor(document: document, view: view)
@@ -81,6 +91,8 @@ struct ViewBar: View {
                     .help("Row height")
                 }
                 ViewTypeSettings(document: document, view: view)
+                }
+                .disabled(view.config.isLocked)
             }
         }
         .padding(.horizontal, 10)

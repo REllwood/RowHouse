@@ -33,7 +33,9 @@ public final class BaseStorage: @unchecked Sendable {
     public static let packageExtension = "rowhouse"
     static let formatVersion = 1
     static let segmentLimit = 5_000
-    static let compactionAge: TimeInterval = 24 * 3600
+    /// Log segments are kept this long after a snapshot covers them, which is also how far back
+    /// record revision history reaches.
+    static let compactionAge: TimeInterval = 14 * 24 * 3600
 
     public let packageURL: URL
     public let deviceID: String
@@ -208,6 +210,29 @@ public final class BaseStorage: @unchecked Sendable {
         }
         logOffsets[key] = consumed
         return result
+    }
+
+    // MARK: - History
+
+    /// Every logged operation that touched one entity, from all devices, oldest first. Reads the
+    /// logs directly (including segments already folded into snapshots), so it can take a moment
+    /// on large bases — call it off the main thread.
+    public func operations(forEntity id: String) -> [ChangeOperation] {
+        let needle = Data("\"\(id)\"".utf8)
+        var ops: [ChangeOperation] = []
+        let deviceDirs = (try? fm.contentsOfDirectory(at: devicesURL, includingPropertiesForKeys: nil)) ?? []
+        for dir in deviceDirs {
+            let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+            for file in files where file.lastPathComponent.hasPrefix("log-") && file.pathExtension == "jsonl" {
+                guard let data = Self.coordinatedRead(file) else { continue }
+                for line in data.split(separator: UInt8(ascii: "\n")) where line.range(of: needle) != nil {
+                    if let json = try? JSONValue.parse(Data(line)), let op = ChangeOperation(json: json), op.id == id {
+                        ops.append(op)
+                    }
+                }
+            }
+        }
+        return ops.sorted { $0.ts < $1.ts }
     }
 
     // MARK: - Writing

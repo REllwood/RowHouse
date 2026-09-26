@@ -126,8 +126,9 @@ public final class ComputeEngine {
 
     // MARK: - Resolution
 
-    private func resolve(record: RecordModel, field: FieldModel) -> CellValue {
-        let raw = record[field.id]
+    /// Interprets a stored value through a field's type without a record: used for values that
+    /// aren't in a record yet (forms), or were in one earlier (history, trash).
+    public func valueForStored(_ raw: JSONValue, field: FieldModel) -> CellValue {
         switch field.type {
         case .singleLineText, .multilineText, .email, .url, .phoneNumber:
             if let s = raw.stringValue, !s.isEmpty { return .text(s) }
@@ -144,16 +145,30 @@ public final class ComputeEngine {
             if let c = field.choice(id: key) ?? field.choice(named: key) { return .choice(c) }
             return .empty
         case .multipleSelects:
-            let keys = raw.stringArray
-            let choices = keys.compactMap { field.choice(id: $0) ?? field.choice(named: $0) }
+            let choices = raw.stringArray.compactMap { field.choice(id: $0) ?? field.choice(named: $0) }
             return choices.isEmpty ? .empty : .choices(choices)
         case .date:
             guard let s = raw.stringValue, let d = DateCoding.decode(s) else { return .empty }
             return .date(d, includesTime: field.includesTime)
         case .attachment:
-            guard let items = raw.arrayValue else { return .empty }
-            let atts = items.compactMap { $0.decode(AttachmentInfo.self) }
+            let atts = (raw.arrayValue ?? []).compactMap { $0.decode(AttachmentInfo.self) }
             return atts.isEmpty ? .empty : .attachments(atts)
+        case .link:
+            let refs = raw.stringArray.compactMap { id -> LinkedRecordRef? in
+                guard let r = document.record(id) else { return nil }
+                return LinkedRecordRef(id: id, title: title(of: r))
+            }
+            return refs.isEmpty ? .empty : .links(refs)
+        default:
+            return .empty
+        }
+    }
+
+    private func resolve(record: RecordModel, field: FieldModel) -> CellValue {
+        switch field.type {
+        case .singleLineText, .multilineText, .email, .url, .phoneNumber, .number, .currency, .percent, .duration,
+             .rating, .checkbox, .singleSelect, .multipleSelects, .date, .attachment:
+            return valueForStored(record[field.id], field: field)
         case .link:
             let ids = linkedRecordIDs(record: record, field: field)
             guard !ids.isEmpty else { return .empty }

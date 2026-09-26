@@ -462,7 +462,7 @@ public final class BaseDocument {
         }
     }
 
-    private static func isDeleted(_ e: EntityState) -> Bool {
+    static func isDeleted(_ e: EntityState) -> Bool {
         e["_deleted"]?.boolValue == true
     }
 
@@ -477,8 +477,8 @@ public final class BaseDocument {
         return info
     }
 
-    private static func makeTable(_ id: String, _ e: EntityState) -> TableModel? {
-        guard !isDeleted(e), let name = e["name"]?.stringValue else { return nil }
+    static func makeTable(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> TableModel? {
+        guard includeDeleted || !isDeleted(e), let name = e["name"]?.stringValue else { return nil }
         return TableModel(
             id: id,
             name: name,
@@ -489,8 +489,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeField(_ id: String, _ e: EntityState) -> FieldModel? {
-        guard !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
+    static func makeField(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> FieldModel? {
+        guard includeDeleted || !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
               let typeName = e["type"]?.stringValue, let type = FieldType(rawValue: typeName)
         else { return nil }
         return FieldModel(
@@ -504,8 +504,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeView(_ id: String, _ e: EntityState) -> ViewModel? {
-        guard !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
+    static func makeView(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> ViewModel? {
+        guard includeDeleted || !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
               let typeName = e["type"]?.stringValue, let type = ViewType(rawValue: typeName)
         else { return nil }
         return ViewModel(
@@ -518,8 +518,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeRecord(_ id: String, _ e: EntityState) -> RecordModel? {
-        guard !isDeleted(e), let table = e["_table"]?.stringValue else { return nil }
+    static func makeRecord(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> RecordModel? {
+        guard includeDeleted || !isDeleted(e), let table = e["_table"]?.stringValue else { return nil }
         var cells: [String: JSONValue] = [:]
         var stamps: [String: HLC] = [:]
         cells.reserveCapacity(e.props.count)
@@ -540,8 +540,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeAutomation(_ id: String, _ e: EntityState) -> AutomationModel? {
-        guard !isDeleted(e), let name = e["name"]?.stringValue,
+    static func makeAutomation(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> AutomationModel? {
+        guard includeDeleted || !isDeleted(e), let name = e["name"]?.stringValue,
               let trigger = e["trigger"]?.decode(AutomationTrigger.self)
         else { return nil }
         return AutomationModel(
@@ -555,8 +555,8 @@ public final class BaseDocument {
         )
     }
 
-    private func makeComment(_ id: String, _ e: EntityState) -> CommentModel? {
-        guard !Self.isDeleted(e), let record = e["record"]?.stringValue, let text = e["text"]?.stringValue else { return nil }
+    func makeComment(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> CommentModel? {
+        guard includeDeleted || !Self.isDeleted(e), let record = e["record"]?.stringValue, let text = e["text"]?.stringValue else { return nil }
         let author = e["author"]?.stringValue ?? ""
         return CommentModel(
             id: id,

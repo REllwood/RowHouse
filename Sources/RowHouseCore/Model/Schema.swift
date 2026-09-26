@@ -222,6 +222,8 @@ public struct FormConfig: Codable, Hashable, Sendable {
     public var requiredFieldIDs: [String]?
     public var submitLabel: String?
     public var successMessage: String?
+    /// Field id → conditions on earlier answers that must hold for the field to be shown.
+    public var fieldConditions: [String: FilterGroup]?
 
     public init() {}
 }
@@ -283,10 +285,13 @@ public struct ViewConfig: Codable, Hashable, Sendable {
     public var colorFieldID: String?
     public var form: FormConfig?
     public var chart: ChartConfig?
+    /// A locked view's filters, sorts, grouping, fields and layout can't be changed (records can).
+    public var locked: Bool?
 
     public init() {}
 
     public var hidden: Set<String> { Set(hiddenFieldIDs ?? []) }
+    public var isLocked: Bool { locked == true }
 }
 
 public struct ViewModel: Identifiable, Equatable, Sendable {

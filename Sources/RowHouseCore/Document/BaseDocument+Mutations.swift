@@ -423,6 +423,12 @@ extension BaseDocument {
         var config = view.config
         update(&config)
         guard config != view.config else { return }
+        if view.config.isLocked {
+            // Only unlocking is allowed on a locked view.
+            var otherChanges = config
+            otherChanges.locked = view.config.locked
+            guard otherChanges == view.config else { return }
+        }
         commit([Mutation(.view, id, ["config": JSONValue(encoding: config)])], actionName: actionName)
     }
 

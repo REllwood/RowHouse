@@ -139,6 +139,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             rebuildColumns()
             columnSignature = signature
         }
+        tableView.allowsColumnReordering = !view.config.isLocked
         let revisionChanged = revision != lastRevision
         lastRevision = revision
         if editor != nil {
@@ -155,6 +156,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func columnsSignature(fields: [FieldModel], view: ViewModel) -> String {
         fields.map { f in "\(f.id):\(f.name):\(f.type.rawValue):\(Int(view.config.columnWidths?[f.id] ?? 0))" }.joined(separator: "|")
+            + (view.config.isLocked ? "|locked" : "")
     }
 
     private func defaultWidth(_ field: FieldModel, isPrimary: Bool) -> CGFloat {
@@ -189,7 +191,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             column.width = CGFloat(view.config.columnWidths?[field.id] ?? Double(defaultWidth(field, isPrimary: field.id == primaryID)))
             column.minWidth = 60
             column.maxWidth = 1200
-            column.resizingMask = .userResizingMask
+            column.resizingMask = view.config.isLocked ? [] : .userResizingMask
             let header = FieldHeaderCell(textCell: field.name)
             header.field = field
             column.headerCell = header
@@ -377,7 +379,9 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         menu.addItem(ActionMenuItem("Insert right", image: "arrow.right.to.line") { [weak self] in
             self?.showFieldConfig(fieldID: nil, insertAfter: field.id, relativeTo: rect, of: header)
         })
+        let locked = view.config.isLocked
         menu.addItem(.separator())
+        if !locked {
         menu.addItem(ActionMenuItem("Sort ascending", image: "arrow.up") { [weak self] in
             guard let self else { return }
             self.document.updateViewConfig(self.view.id, actionName: "Sort") { $0.sorts = [SortSpec(fieldID: field.id, ascending: true)] }
@@ -399,6 +403,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 config.filter = filter
             }
         })
+        }
         menu.addItem(.separator())
         if !isPrimary {
             if field.type.canBePrimary {
@@ -407,14 +412,14 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                     self.document.setPrimaryField(field.id, in: self.view.tableID)
                 })
             }
-            menu.addItem(ActionMenuItem("Hide field", image: "eye.slash") { [weak self] in
+            if !locked { menu.addItem(ActionMenuItem("Hide field", image: "eye.slash") { [weak self] in
                 guard let self else { return }
                 self.document.updateViewConfig(self.view.id, actionName: "Hide Field") { config in
                     var set = config.hidden
                     set.insert(field.id)
                     config.hiddenFieldIDs = Array(set)
                 }
-            })
+            }) }
             menu.addItem(.separator())
             let delete = ActionMenuItem("Delete field", image: "trash") { [weak self] in
                 self?.confirmDeleteField(field)
@@ -475,7 +480,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func summaryMenu(forFieldID fieldID: String) -> NSMenu? {
-        guard let field = document.field(fieldID) else { return nil }
+        guard let field = document.field(fieldID), !view.config.isLocked else { return nil }
         let menu = NSMenu()
         let current = view.config.summaries?[fieldID] ?? SummaryFunction.none
         for fn in SummaryFunction.available(for: field.type) {

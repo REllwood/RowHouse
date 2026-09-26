@@ -162,3 +162,90 @@ public final class Library {
         return trimmed.isEmpty || trimmed.hasPrefix(".") ? "Base" : trimmed
     }
 }
+
+// MARK: - Duplicate, back up and restore
+
+public enum LibraryError: LocalizedError, Sendable {
+    case notABackup
+    case unzipFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notABackup: "That file isn't a RowHouse backup."
+        case .unzipFailed(let message): "Couldn't open the backup: \(message)"
+        }
+    }
+}
+
+extension Library {
+    /// Copies a base into a new package with its own id. The copy starts from `state` (the source's
+    /// merged state) written as this device's snapshot, plus every attachment file.
+    public func duplicate(_ entry: LibraryEntry, state: BaseState, name: String, deviceID: String) throws -> LibraryEntry {
+        let copy = try createPackage(named: name)
+        let fm = FileManager.default
+        let sourceAttachments = entry.url.appendingPathComponent("attachments", isDirectory: true)
+        let targetAttachments = copy.url.appendingPathComponent("attachments", isDirectory: true)
+        for file in (try? fm.contentsOfDirectory(at: sourceAttachments, includingPropertiesForKeys: nil)) ?? [] {
+            let dest = targetAttachments.appendingPathComponent(file.lastPathComponent)
+            if !fm.fileExists(atPath: dest.path) { try? fm.copyItem(at: file, to: dest) }
+        }
+        let storage = BaseStorage(packageURL: copy.url, deviceID: deviceID)
+        storage.writeSnapshot(state)
+        storage.flush()
+        refresh()
+        return copy
+    }
+
+    /// Writes a zip of the whole base package (every device's logs, snapshots and attachments).
+    public nonisolated static func exportBackup(of packageURL: URL, to destination: URL) throws {
+        var coordError: NSError?
+        var copyError: Error?
+        NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: packageURL, options: .forUploading, error: &coordError) { zipURL in
+            do {
+                if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
+                try FileManager.default.copyItem(at: zipURL, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+        if let e = coordError ?? copyError { throw e }
+    }
+
+    /// Restores a backup zip as a new base (with a new id, so it can sit alongside the original).
+    public func importBackup(from zipURL: URL) throws -> LibraryEntry {
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent("rowhouse-restore-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temp) }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", zipURL.path, temp.path]
+        let errors = Pipe()
+        process.standardError = errors
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw LibraryError.unzipFailed(String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        }
+        let candidates = (try? fm.contentsOfDirectory(at: temp, includingPropertiesForKeys: nil)) ?? []
+        guard let package = candidates.first(where: { $0.pathExtension == BaseStorage.packageExtension }) ?? (BaseStorage.readManifest(at: temp) != nil ? temp : nil),
+              var manifest = BaseStorage.readManifest(at: package)
+        else { throw LibraryError.notABackup }
+        manifest.baseID = RowID.base()
+        let baseName = package.deletingPathExtension().lastPathComponent
+        var dest = rootURL.appendingPathComponent("\(Self.sanitize(baseName)).\(BaseStorage.packageExtension)", isDirectory: true)
+        var n = 2
+        while fm.fileExists(atPath: dest.path) {
+            dest = rootURL.appendingPathComponent("\(Self.sanitize(baseName)) \(n).\(BaseStorage.packageExtension)", isDirectory: true)
+            n += 1
+        }
+        try fm.copyItem(at: package, to: dest)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try BaseStorage.coordinatedWrite(try encoder.encode(manifest), to: dest.appendingPathComponent("manifest.json"))
+        refresh()
+        guard let entry = entries.first(where: { $0.baseID == manifest.baseID }) else { throw LibraryError.notABackup }
+        return entry
+    }
+}

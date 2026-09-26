@@ -70,7 +70,18 @@ struct SidebarView: View {
             let id = session.document.createTable(name: "Table \(session.document.tables.count + 1)")
             state.destination = .table(base: session.id, table: id)
         }
+        Button("Duplicate Base") {
+            Task {
+                if let id = await app.duplicateBase(session.id), let table = app.mainTable(of: id) {
+                    state.destination = .table(base: id, table: table.id)
+                }
+            }
+        }
         Divider()
+        Button("Run Script…") { state.scriptBase = BaseSheetTarget(baseID: session.id) }
+        Button("Trash…") { state.trashBase = BaseSheetTarget(baseID: session.id) }
+        Divider()
+        Button("Export Backup…") { app.exportBackup(session.id) }
         Button("Show in Finder") { app.revealInFinder(session.id) }
         Divider()
         Button("Move Base to Trash…", role: .destructive) {
@@ -230,6 +241,13 @@ private struct SidebarFooter: View {
                     Button("New Base…") { state.newBaseSheet = true }
                     Button("Import CSV…") { state.csvImportSheet = true }
                     Button("Import from Airtable…") { state.airtableImportSheet = true }
+                    Button("Restore Backup…") {
+                        Task {
+                            if let id = await app.importBackup(), let table = app.mainTable(of: id) {
+                                state.destination = .table(base: id, table: table.id)
+                            }
+                        }
+                    }
                 } label: {
                     Label("New Base", systemImage: "plus")
                 }
