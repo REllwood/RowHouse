@@ -10,6 +10,7 @@ struct SettingsView: View {
                 .tabItem { Label("Storage", systemImage: "icloud") }
             AutomationSettings()
                 .tabItem { Label("Automations", systemImage: "bolt") }
+            AssistantSettings().tabItem { Label("AI Assistants", systemImage: "sparkles") }
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
         }
