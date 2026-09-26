@@ -261,6 +261,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 v.hovering = row == hoverRow
                 v.rowSelected = selectedRows.contains(row)
                 v.commentCount = document.commentCount(for: recordID)
+                v.accent = document.recordColor(record, view: view)
                 return v
             }
             if id == Self.addColumnID { return nil }

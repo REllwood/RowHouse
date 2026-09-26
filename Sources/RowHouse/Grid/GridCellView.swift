@@ -258,12 +258,18 @@ final class RowNumberCellView: NSView {
     var hovering = false { didSet { if oldValue != hovering { needsDisplay = true } } }
     var rowSelected = false { didSet { if oldValue != rowSelected { needsDisplay = true } } }
     var commentCount = 0
+    /// Record colour from the view's colour settings, drawn as a bar on the leading edge.
+    var accent: ChoiceColor? { didSet { if oldValue != accent { needsDisplay = true } } }
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         if rowSelected {
             Theme.selectionFill.setFill()
             bounds.fill()
+        }
+        if let accent {
+            Theme.solid(accent).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 2, y: 3, width: 4, height: bounds.height - 6), xRadius: 2, yRadius: 2).fill()
         }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),

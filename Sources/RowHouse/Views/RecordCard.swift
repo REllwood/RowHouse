@@ -122,10 +122,4 @@ extension BaseDocument {
         let primary = primaryField(of: view.tableID)?.id
         return Array(visibleFields(for: view).filter { $0.id != primary && !excluding.contains($0.id) && $0.type != .button }.prefix(limit))
     }
-
-    /// The colour a record should use when a view colours records by a single select.
-    func recordColor(_ record: RecordModel, view: ViewModel) -> ChoiceColor? {
-        guard let f = field(view.config.colorFieldID), case .choice(let c) = value(record, f) else { return nil }
-        return c.color
-    }
 }

@@ -235,3 +235,32 @@ struct HTMLExportTests {
         #expect(record.contains("<dt>Notes</dt>"))
     }
 }
+
+@Suite("Record colours") @MainActor
+struct RecordColorTests {
+    @Test func conditionRulesWinOverSelectColoursAndSkipIncompleteRules() {
+        let doc = TestSupport.document()
+        let t = doc.createTable(name: "T", starterFields: false, emptyRecords: 0)
+        let name = doc.primaryField(of: t)!.id
+        let points = doc.createField(in: t, name: "Points", type: .number)
+        var o = FieldOptions()
+        o.choices = [SelectChoice(name: "Todo", color: .gray)]
+        let status = doc.createField(in: t, name: "Status", type: .singleSelect, options: o)
+        let todo = doc.field(status)!.choice(named: "Todo")!.id
+        let big = doc.createRecord(in: t, values: [name: "Big", points: 8, status: .string(todo)])
+        let small = doc.createRecord(in: t, values: [name: "Small", points: 1, status: .string(todo)])
+        let v = doc.views(in: t)[0].id
+        doc.updateViewConfig(v) { $0.colorFieldID = status }
+        #expect(doc.recordColor(doc.record(big)!, view: doc.view(v)!) == .gray)
+        doc.updateViewConfig(v) {
+            $0.colorRules = [
+                ColorRule(filter: FilterGroup(conditions: [FilterCondition(fieldID: points, op: .greaterThan, value: nil)]), color: .blue),
+                ColorRule(filter: FilterGroup(conditions: [FilterCondition(fieldID: points, op: .greaterThan, value: 5)]), color: .red),
+            ]
+        }
+        #expect(doc.recordColor(doc.record(big)!, view: doc.view(v)!) == .red)
+        #expect(doc.recordColor(doc.record(small)!, view: doc.view(v)!) == nil)
+        let copy = doc.duplicateView(v)!
+        #expect(doc.view(copy)!.config.colorRules?.count == 2)
+    }
+}

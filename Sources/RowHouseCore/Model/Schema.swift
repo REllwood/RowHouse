@@ -298,6 +298,8 @@ public struct ViewConfig: Codable, Hashable, Sendable {
     public var timelineScale: TimelineScale?
     /// Colors records by the value of a single-select field.
     public var colorFieldID: String?
+    /// Colors records by conditions instead (first matching rule wins); takes precedence over `colorFieldID`.
+    public var colorRules: [ColorRule]?
     public var form: FormConfig?
     public var chart: ChartConfig?
     /// A locked view's filters, sorts, grouping, fields and layout can't be changed (records can).
@@ -307,6 +309,19 @@ public struct ViewConfig: Codable, Hashable, Sendable {
 
     public var hidden: Set<String> { Set(hiddenFieldIDs ?? []) }
     public var isLocked: Bool { locked == true }
+}
+
+/// "Colour records using conditions": records matching `filter` get `color`.
+public struct ColorRule: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var filter: FilterGroup
+    public var color: ChoiceColor
+
+    public init(id: String = RowID.make("clr"), filter: FilterGroup = FilterGroup(), color: ChoiceColor) {
+        self.id = id
+        self.filter = filter
+        self.color = color
+    }
 }
 
 public struct ViewModel: Identifiable, Equatable, Sendable {

@@ -69,8 +69,8 @@ struct ViewBar: View {
                         }
                     }
                 }
-                if view.type == .calendar || view.type == .timeline || view.type == .kanban || view.type == .gallery {
-                    BarButton(title: "Colour", systemImage: "paintpalette", active: view.config.colorFieldID != nil, tint: .pink) {
+                if view.type == .grid || view.type == .calendar || view.type == .timeline || view.type == .kanban || view.type == .gallery {
+                    BarButton(title: "Colour", systemImage: "paintpalette", active: view.config.colorFieldID != nil || !(view.config.colorRules ?? []).isEmpty, tint: .pink) {
                         ColorEditor(document: document, view: view)
                     }
                 }
@@ -282,24 +282,128 @@ struct ColorEditor: View {
     let document: BaseDocument
     let view: ViewModel
 
+    private enum Mode: String { case none, field, conditions }
+
     var body: some View {
         let selects = document.fields(in: view.tableID).filter { $0.type == .singleSelect }
+        let rules = view.config.colorRules ?? []
+        let mode: Mode = !rules.isEmpty ? .conditions : (view.config.colorFieldID != nil ? .field : .none)
         VStack(alignment: .leading, spacing: 10) {
             Text("Colour records").font(.headline)
-            Picker("Use the colours of", selection: Binding(get: { view.config.colorFieldID ?? "" }, set: { id in
-                document.updateViewConfig(view.id, actionName: "Change Colours") { $0.colorFieldID = id.isEmpty ? nil : id }
+            Picker("", selection: Binding(get: { mode }, set: { new in
+                document.updateViewConfig(view.id, actionName: "Change Colours") { config in
+                    switch new {
+                    case .none:
+                        config.colorFieldID = nil
+                        config.colorRules = nil
+                    case .field:
+                        config.colorRules = nil
+                        config.colorFieldID = config.colorFieldID ?? selects.first?.id
+                    case .conditions:
+                        config.colorRules = [ColorRule(color: .green)]
+                    }
+                }
             })) {
-                Text("None").tag("")
-                ForEach(selects) { f in Text(f.name).tag(f.id) }
+                Text("None").tag(Mode.none)
+                Text("By a single select field").tag(Mode.field)
+                Text("Using conditions").tag(Mode.conditions)
             }
-            if selects.isEmpty {
-                Text("Add a single select field to colour records by its options.")
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            if mode == .field {
+                Picker("Use the colours of", selection: Binding(get: { view.config.colorFieldID ?? "" }, set: { id in
+                    document.updateViewConfig(view.id, actionName: "Change Colours") { $0.colorFieldID = id.isEmpty ? nil : id }
+                })) {
+                    ForEach(selects) { f in Text(f.name).tag(f.id) }
+                }
+                if selects.isEmpty {
+                    Text("Add a single select field to colour records by its options.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if mode == .conditions {
+                ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                    ColorRuleRow(document: document, view: view, rule: rule, index: index)
+                }
+                Button {
+                    let used = Set(rules.map(\.color))
+                    let next = ChoiceColor.allCases.first { !used.contains($0) } ?? .blue
+                    document.updateViewConfig(view.id, actionName: "Change Colours") { $0.colorRules = rules + [ColorRule(color: next)] }
+                } label: {
+                    Label("Add condition", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                Text("Records take the colour of the first rule they match.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 340)
+    }
+}
+
+private struct ColorRuleRow: View {
+    let document: BaseDocument
+    let view: ViewModel
+    let rule: ColorRule
+    let index: Int
+    @State private var editing = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(ChoiceColor.allCases, id: \.self) { color in
+                    Button {
+                        update { $0.color = color }
+                    } label: {
+                        Label(color.rawValue.capitalized, systemImage: color == rule.color ? "checkmark.circle.fill" : "circle.fill")
+                    }
+                }
+            } label: {
+                Circle().fill(rule.color.swiftUI).frame(width: 14, height: 14)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            Button {
+                editing = true
+            } label: {
+                Text(summary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.borderless)
+            .popover(isPresented: $editing) {
+                FilterEditor(document: document, tableID: view.tableID, filter: rule.filter, title: "Colour records when") { group in
+                    update { $0.filter = group }
+                }
+            }
+            Button {
+                document.updateViewConfig(view.id, actionName: "Change Colours") { config in
+                    config.colorRules?.removeAll { $0.id == rule.id }
+                    if config.colorRules?.isEmpty == true { config.colorRules = nil }
+                }
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private var summary: String {
+        let conditions = rule.filter.conditions.compactMap { c in document.field(c.fieldID).map { "\($0.name) \(c.op.displayName)" } }
+        if conditions.isEmpty && rule.filter.groups.isEmpty { return "Set conditions…" }
+        let joined = conditions.joined(separator: rule.filter.conjunction == .and ? " and " : " or ")
+        return rule.filter.groups.isEmpty ? joined : joined + " …"
+    }
+
+    private func update(_ change: (inout ColorRule) -> Void) {
+        var copy = rule
+        change(&copy)
+        document.updateViewConfig(view.id, actionName: "Change Colours") { config in
+            guard let i = config.colorRules?.firstIndex(where: { $0.id == rule.id }) else { return }
+            config.colorRules?[i] = copy
+        }
     }
 }
 

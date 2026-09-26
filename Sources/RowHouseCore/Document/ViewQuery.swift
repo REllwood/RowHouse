@@ -192,6 +192,16 @@ extension BaseDocument {
         }
     }
 
+    /// The colour a view gives a record: the first matching colour rule, otherwise the colour of
+    /// its single select value when the view colours by a field. Rules with no complete condition never match.
+    public func recordColor(_ record: RecordModel, view: ViewModel) -> ChoiceColor? {
+        if let rules = view.config.colorRules, !rules.isEmpty {
+            return rules.first { evaluate(record, filter: $0.filter, strict: false) == true }?.color
+        }
+        guard let f = field(view.config.colorFieldID), f.tableID == record.tableID, case .choice(let c) = value(record, f) else { return nil }
+        return c.color
+    }
+
     public func matches(_ record: RecordModel, condition: FilterCondition) -> Bool {
         evaluate(record, condition: condition, strict: false) ?? true
     }

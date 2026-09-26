@@ -742,6 +742,11 @@ extension ViewConfig {
         dateFieldID = m(dateFieldID)
         endDateFieldID = m(endDateFieldID)
         colorFieldID = m(colorFieldID)
+        colorRules = colorRules?.map { rule in
+            var rule = rule
+            rule.filter = rule.filter.remapped(map)
+            return rule
+        }
         if var f = form {
             f.fieldIDs = f.fieldIDs?.compactMap { map[$0] }
             f.requiredFieldIDs = f.requiredFieldIDs?.compactMap { map[$0] }
