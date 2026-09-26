@@ -78,9 +78,16 @@ public struct CommentModel: Identifiable, Equatable, Sendable {
 }
 
 public struct DeviceInfo: Identifiable, Equatable, Sendable {
+    /// `kind` of a device that is an AI assistant working through the MCP server rather than a Mac.
+    public static let agentKind = "agent"
+
     public var id: String
     public var name: String
     public var lastSeen: Date
+    /// nil for a Mac running RowHouse.
+    public var kind: String? = nil
+
+    public var isAgent: Bool { kind == Self.agentKind }
 }
 
 public struct AttachmentInfo: Codable, Hashable, Sendable, Identifiable {

@@ -290,3 +290,42 @@ public final class ComputeEngine {
         var timeZone: TimeZone { .current }
     }
 }
+
+/// A filter formula that can't be used: a syntax error, or a reference to a field the table lacks.
+public struct FormulaFilterError: Error, Sendable, Equatable, CustomStringConvertible, LocalizedError {
+    public var message: String
+
+    public init(_ message: String) {
+        self.message = message
+    }
+
+    public var description: String { message }
+    public var errorDescription: String? { message }
+}
+
+extension ComputeEngine {
+    /// Keeps the records for which an Airtable-style formula, such as `AND({Status} = "Done", {Qty} > 3)`,
+    /// evaluates to a truthy value. Errors inside the formula count as false for that record.
+    public func filter(_ records: [RecordModel], formula source: String, tableID: String) throws(FormulaFilterError) -> [RecordModel] {
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return records }
+        let expr: FormulaExpr
+        do {
+            expr = try FormulaParser.parse(source)
+        } catch {
+            throw FormulaFilterError(error.message)
+        }
+        for reference in expr.fieldReferences.sorted() where resolveField(reference, tableID: tableID) == nil {
+            throw FormulaFilterError("Unknown field {\(reference)}")
+        }
+        return records.filter { record in
+            FormulaEvaluator.evaluate(expr, in: Context(engine: self, record: record, tableID: tableID, variables: [:])).isTruthy
+        }
+    }
+}
+
+extension BaseDocument {
+    /// Records of a table, in their manual order, for which an Airtable-style formula is truthy.
+    public func records(in tableID: String, matchingFormula formula: String) throws(FormulaFilterError) -> [RecordModel] {
+        try compute.filter(records(in: tableID), formula: formula, tableID: tableID)
+    }
+}

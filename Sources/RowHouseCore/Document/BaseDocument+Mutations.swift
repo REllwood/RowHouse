@@ -24,14 +24,17 @@ extension BaseDocument {
     }
 
     /// Records this device's name so other devices can show who made changes. Not undoable.
-    public func registerDevice() {
+    /// `kind` is nil for a Mac and `DeviceInfo.agentKind` for an AI assistant.
+    public func registerDevice(kind: String? = nil) {
         let existing = hasDevice(deviceID)
         let stale = existing.map { Date().timeIntervalSince($0.lastSeen) > 86_400 } ?? true
-        guard existing?.name != deviceName || stale else { return }
-        commit([Mutation(.device, deviceID, [
+        guard existing?.name != deviceName || existing?.kind != kind || stale else { return }
+        var set: [String: JSONValue] = [
             "name": .string(deviceName),
             "lastSeen": .number(Date().timeIntervalSince1970 * 1000),
-        ])], undoable: false)
+        ]
+        if let kind { set["kind"] = .string(kind) }
+        commit([Mutation(.device, deviceID, set)], undoable: false)
     }
 
     // MARK: - Tables

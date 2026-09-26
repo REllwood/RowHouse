@@ -183,9 +183,17 @@ public final class BaseDocument {
         return commentsByID.values.reduce(0) { $0 + ($1.recordID == recordID ? 1 : 0) }
     }
 
+    /// Macs that have opened this base. AI assistants are listed separately in `agents`, so they're
+    /// never chosen to run scheduled automations.
     public var devices: [DeviceInfo] {
         _ = schemaRevision
-        return devicesByID.values.sorted { $0.name < $1.name }
+        return devicesByID.values.filter { !$0.isAgent }.sorted { $0.name < $1.name }
+    }
+
+    /// AI assistants that have edited this base through the MCP server.
+    public var agents: [DeviceInfo] {
+        _ = schemaRevision
+        return devicesByID.values.filter(\.isAgent).sorted { $0.name < $1.name }
     }
 
     public func deviceName(for id: String) -> String {
@@ -570,7 +578,7 @@ public final class BaseDocument {
 
     private static func makeDevice(_ id: String, _ e: EntityState) -> DeviceInfo? {
         guard let name = e["name"]?.stringValue else { return nil }
-        return DeviceInfo(id: id, name: name, lastSeen: Date(timeIntervalSince1970: (e["lastSeen"]?.numberValue ?? 0) / 1000))
+        return DeviceInfo(id: id, name: name, lastSeen: Date(timeIntervalSince1970: (e["lastSeen"]?.numberValue ?? 0) / 1000), kind: e["kind"]?.stringValue)
     }
 
     // MARK: - Internal helpers for extensions
