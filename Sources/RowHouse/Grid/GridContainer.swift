@@ -92,5 +92,6 @@ struct GridRepresentable: NSViewRepresentable {
         commandTarget.expandSelection = { [weak controller] in controller?.expandSelection() }
         commandTarget.deleteSelection = { [weak controller] in controller?.deleteSelection() }
         commandTarget.addField = { [weak controller] in controller?.showAddField() }
+        commandTarget.fillDown = { [weak controller] in controller?.fillDown() }
     }
 }

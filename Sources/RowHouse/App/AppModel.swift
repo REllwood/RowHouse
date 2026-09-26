@@ -282,6 +282,7 @@ final class WindowState {
     var scriptBase: BaseSheetTarget?
     var findReplaceTable: BaseSheetTarget?
     var duplicatesTable: BaseSheetTarget?
+    var showShortcuts = false
     var searchBase: BaseSheetTarget?
     /// Values to pre-fill in a form view, from a rowhouse://form link (view id → field name → text).
     var formPrefill: [String: [String: String]] = [:]

@@ -32,6 +32,7 @@ final class GridCommandTarget {
     var printView: () -> Void = {}
     var focusSearch: () -> Void = {}
     var addField: () -> Void = {}
+    var fillDown: () -> Void = {}
 }
 
 struct AppCommands: Commands {
@@ -72,6 +73,9 @@ struct AppCommands: Commands {
             // handles selected rows when the grid has focus.
             Button("Delete Selected Records") { grid?.deleteSelection() }
                 .disabled(grid == nil)
+            Button("Fill Down") { grid?.fillDown() }
+                .keyboardShortcut("d", modifiers: [.command])
+                .disabled(grid == nil)
             Divider()
             Button("Add Field") { grid?.addField() }
                 .keyboardShortcut("n", modifiers: [.command, .option])
@@ -100,6 +104,10 @@ struct AppCommands: Commands {
                 .disabled(currentTable == nil)
         }
         CommandGroup(replacing: .help) {
+            Button("Keyboard Shortcuts") { window?.showShortcuts = true }
+                .keyboardShortcut("/", modifiers: [.command])
+                .disabled(window == nil)
+            Divider()
             Button("RowHouse on GitHub") { NSWorkspace.shared.open(AppInfo.repository) }
             Button("Formula Reference") { NSWorkspace.shared.open(URL(string: "https://github.com/REllwood/RowHouse#formulas")!) }
             Divider()

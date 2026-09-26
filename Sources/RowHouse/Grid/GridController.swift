@@ -848,6 +848,32 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if !updates.isEmpty { document.updateRecords(updates, actionName: "Clear Cells") }
     }
 
+    /// Copies the first selected row's values down through the selection (⌘D). With a single cell
+    /// selected, copies the value from the record above.
+    func fillDown() {
+        commitEditing()
+        guard let r = range else { return }
+        let recordRows = r.rows.filter { $0 < rows.count && rows[$0].recordID != nil }
+        var source: Int?
+        var targets: [Int]
+        if recordRows.count > 1 {
+            source = recordRows.first
+            targets = Array(recordRows.dropFirst())
+        } else {
+            source = recordRows.first.flatMap { nextRecordRow(from: $0, step: -1) }
+            targets = recordRows
+        }
+        guard let source, let sourceID = rows[source].recordID, let record = document.record(sourceID) else { return }
+        var updates: [String: [String: JSONValue]] = [:]
+        for row in targets {
+            guard let rid = rows[row].recordID else { continue }
+            for col in r.cols where col < fields.count && fields[col].isEditable {
+                updates[rid, default: [:]][fields[col].id] = document.editableValue(record, fields[col])
+            }
+        }
+        if !updates.isEmpty { document.updateRecords(updates, actionName: "Fill Down") }
+    }
+
     // MARK: - Records
 
     func addRecord(after afterID: String? = nil) {
