@@ -114,6 +114,8 @@ struct ChartView: View {
                 keys = cs.map { c in (c.id, c.name, c.color.swiftUI, category.choices.firstIndex { $0.id == c.id } ?? 0) }
             case .links(let refs):
                 keys = refs.map { ($0.id, $0.title, .accentColor, 0) }
+            case .collaborators(let people):
+                keys = people.map { ($0.id, $0.displayName, $0.color.swiftUI, 0) }
             case .empty:
                 keys = [("", "Empty", .gray.opacity(0.5), Int.max)]
             case .bool(let b):

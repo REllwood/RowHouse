@@ -7,6 +7,8 @@ public struct BaseInfo: Equatable, Sendable {
     public var description: String = ""
     /// The device that runs scheduled automations for this base.
     public var automationHostDeviceID: String?
+    /// People who can be chosen in collaborator fields.
+    public var people: [Person] = []
 
     public init() {}
 }
@@ -28,6 +30,16 @@ public struct FieldModel: Identifiable, Equatable, Sendable {
     public var options: FieldOptions
     public var order: Double
     public var description: String
+
+    public init(id: String, tableID: String, name: String, type: FieldType, options: FieldOptions = FieldOptions(), order: Double = 0, description: String = "") {
+        self.id = id
+        self.tableID = tableID
+        self.name = name
+        self.type = type
+        self.options = options
+        self.order = order
+        self.description = description
+    }
 
     public var choices: [SelectChoice] { options.choices ?? [] }
 
@@ -210,7 +222,7 @@ public enum SummaryFunction: String, Codable, CaseIterable, Sendable {
         }
         if type == .checkbox { base = [.none, .checked, .unchecked, .percentFilled, .percentEmpty] }
         if type.isDateLike { base += [.earliest, .latest, .range] }
-        if type.isTextual || type == .singleSelect { base.append(.unique) }
+        if type.isTextual || type.isPeople || type == .singleSelect || type == .barcode { base.append(.unique) }
         return base
     }
 }

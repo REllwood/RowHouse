@@ -154,6 +154,7 @@ public enum CellFormatter {
         case .empty:
             return ""
         case .text(let s):
+            if type == .multilineText, options.richText == true { return RichText.plainText(from: s) }
             return s
         case .number(let n):
             let fmt: FormulaResultFormat? = type == .formula || type == .rollup ? options.resultFormat : nil
@@ -184,6 +185,8 @@ public enum CellFormatter {
             return a.map(\.filename).joined(separator: ", ")
         case .links(let l):
             return l.map(\.title).joined(separator: ", ")
+        case .collaborators(let people):
+            return people.map(\.displayName).joined(separator: ", ")
         case .list(let items):
             return items.map { string($0, field: nil, timeZone: timeZone) }.filter { !$0.isEmpty }.joined(separator: ", ")
         case .error:

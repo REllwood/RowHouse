@@ -74,6 +74,8 @@ final class GridCellView: NSView {
             if case .attachments(let atts) = p.value { drawAttachments(atts, p, in: content) }
         case .lookup:
             drawLookup(p, in: content)
+        case .collaborator, .createdBy, .lastModifiedBy:
+            if case .collaborators(let people) = p.value { drawPeople(people, in: content) }
         case .button:
             drawButton(p.text, in: content)
         default:
@@ -151,6 +153,27 @@ final class GridCellView: NSView {
         }
     }
 
+    private func drawPeople(_ people: [Person], in rect: NSRect) {
+        guard !people.isEmpty else { return }
+        let height = PersonChipDrawing.height
+        var x = rect.minX
+        var y = multiline ? rect.minY + 6 : rect.midY - height / 2
+        for person in people {
+            let w = min(PersonChipDrawing.width(of: person, font: Self.chipFont), max(40, rect.width))
+            if x + w > rect.maxX && x > rect.minX {
+                if multiline && y + height * 2 + 4 < rect.maxY {
+                    x = rect.minX
+                    y += height + 4
+                } else {
+                    break
+                }
+            }
+            let chip = NSRect(x: x, y: y, width: min(w, rect.maxX - x), height: height)
+            PersonChipDrawing.draw(person, in: chip, font: Self.chipFont)
+            x += chip.width + 4
+        }
+    }
+
     private func drawRating(_ p: CellPresentation, in rect: NSRect) {
         let max = Swift.min(10, Swift.max(1, p.field.options.ratingMax ?? 5))
         let value = Int(clampedRating(p.value.numberValue, max: max))
@@ -211,6 +234,9 @@ final class GridCellView: NSView {
             case .attachment:
                 let atts = items.flatMap { v -> [AttachmentInfo] in if case .attachments(let a) = v { return a } else { return [] } }
                 drawAttachments(atts, p, in: rect)
+                return
+            case .collaborator, .createdBy, .lastModifiedBy:
+                drawPeople(items.flatMap { v -> [Person] in if case .collaborators(let people) = v { return people } else { return [] } }, in: rect)
                 return
             default:
                 break

@@ -24,6 +24,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var columnSignature = ""
     private var rebuildingColumns = false
     private var widthSaveTask: Task<Void, Never>?
+    /// AI fields currently being filled from the column menu.
+    private var aiGenerations: Set<String> = []
 
     var callbacks = Callbacks()
     struct Callbacks {
@@ -394,11 +396,21 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             guard let self else { return }
             self.document.updateViewConfig(self.view.id, actionName: "Filter") { config in
                 var filter = config.filter ?? FilterGroup()
-                let op = FilterOperator.available(for: field.type).first ?? .contains
+                let op = FilterOperator.available(for: field).first ?? .contains
                 filter.conditions.append(FilterCondition(fieldID: field.id, op: op, value: field.type == .checkbox ? .bool(true) : nil))
                 config.filter = filter
             }
         })
+        if field.type == .aiText {
+            menu.addItem(.separator())
+            let running = aiGenerations.contains(field.id)
+            let generate = ActionMenuItem(running ? "Generating…" : "Generate for all empty cells in this view", image: "sparkles") { [weak self] in
+                self?.confirmAIGeneration(field)
+            }
+            generate.isEnabled = !running
+            menu.autoenablesItems = false
+            menu.addItem(generate)
+        }
         menu.addItem(.separator())
         if !isPrimary {
             if field.type.canBePrimary {
@@ -443,13 +455,61 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
+    private func confirmAIGeneration(_ field: FieldModel) {
+        let targets = recordIDs.filter { id in document.record(id).map { document.value($0, field).isEmpty } ?? false }
+        guard let window = tableView.window else { return }
+        let alert = NSAlert()
+        guard !targets.isEmpty else {
+            alert.messageText = "Every record in this view already has a value for “\(field.name)”."
+            alert.beginSheetModal(for: window)
+            return
+        }
+        let service: AIService
+        do {
+            service = try AIConfiguration.makeService()
+        } catch {
+            alert.messageText = "Claude AI isn't set up yet"
+            alert.informativeText = error.localizedDescription
+            alert.beginSheetModal(for: window)
+            return
+        }
+        alert.messageText = targets.count == 1
+            ? "Generate “\(field.name)” for 1 empty record?"
+            : "Generate “\(field.name)” for \(targets.count) empty records?"
+        alert.informativeText = "Each record's prompt, including the values of the fields it mentions, is sent to Anthropic with your API key. Values appear as they arrive and can be undone one by one."
+        alert.addButton(withTitle: "Generate")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.generateAIValues(field, recordIDs: targets, service: service)
+        }
+    }
+
+    private func generateAIValues(_ field: FieldModel, recordIDs targets: [String], service: AIService) {
+        aiGenerations.insert(field.id)
+        let document = self.document
+        Task { @MainActor [weak self] in
+            let result = await document.generateAIValues(fieldID: field.id, recordIDs: targets, using: service)
+            self?.aiGenerations.remove(field.id)
+            guard let self, !result.failures.isEmpty, let window = self.tableView.window else { return }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = result.failures.count == 1
+                ? "1 value of “\(field.name)” couldn't be generated"
+                : "\(result.failures.count) values of “\(field.name)” couldn't be generated"
+            let generated = result.generated == 1 ? "1 value was generated." : "\(result.generated) values were generated."
+            alert.informativeText = generated + " " + (result.failures.first?.message ?? "")
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        }
+    }
+
     func showFieldConfig(fieldID: String?, insertAfter: String? = nil, relativeTo rect: NSRect, of view: NSView) {
         popover?.close()
         let pop = NSPopover()
         pop.behavior = .transient
         let tableID = self.view.tableID
         let after = insertAfter ?? (fieldID == nil ? fields.last?.id : nil)
-        pop.contentViewController = NSHostingController(rootView: FieldConfigView(document: document, tableID: tableID, fieldID: fieldID, insertAfter: after) { [weak pop] in
+        pop.contentViewController = NSHostingController(rootView: FieldConfigView(document: document, tableID: tableID, fieldID: fieldID, insertAfter: after, session: session) { [weak pop] in
             pop?.close()
         })
         pop.show(relativeTo: rect, of: view, preferredEdge: .maxY)
@@ -869,6 +929,11 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 values[f.id] = v
             case (let t, .is) where t.isTextual:
                 if let s = v.stringValue { values[f.id] = .string(s) }
+            case (.collaborator, .is), (.collaborator, .isAnyOf), (.collaborator, .hasAnyOf), (.collaborator, .hasAllOf), (.collaborator, .isExactly):
+                let ids = v.collaboratorIDs.filter { document.person($0) != nil }
+                if !ids.isEmpty {
+                    values[f.id] = f.options.allowMultipleCollaborators == true ? .array(ids.map(JSONValue.string)) : .string(ids[0])
+                }
             default:
                 break
             }
@@ -920,6 +985,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             return
         case .singleLineText, .email, .url, .phoneNumber, .number, .currency, .percent, .duration:
             startInlineEditor(pos: pos, rect: rect, text: initialText ?? editText(record: record, field: field), replacing: initialText != nil)
+        case .barcode where initialText != nil:
+            startInlineEditor(pos: pos, rect: rect, text: initialText ?? "", replacing: true)
         case .date where initialText != nil:
             startInlineEditor(pos: pos, rect: rect, text: initialText ?? "", replacing: true)
         case .button:

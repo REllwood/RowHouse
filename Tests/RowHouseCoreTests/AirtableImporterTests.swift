@@ -54,7 +54,7 @@ struct AirtableImporterTests {
         #expect(report.fields == 22)
         #expect(report.attachments == 1)
         #expect(report.skippedAttachments == 1)
-        #expect(report.warnings.contains { $0.contains("“Owner”") && $0.contains("collaborator") })
+        #expect(!report.warnings.contains { $0.contains("“Owner”") })
         #expect(report.warnings.contains { $0.contains("1 attachment") })
         #expect(progressValues.first == 0 && progressValues.last == 1)
         #expect(progressValues == progressValues.sorted())
@@ -70,7 +70,7 @@ struct AirtableImporterTests {
         #expect(projectFields.map(\.name) == ["Name", "Status", "Tags", "Due", "Kickoff", "Budget", "Progress", "Tasks", "Task count",
                                               "Longest task", "Task names", "Label", "Files", "Owner", "Related"])
         #expect(projectFields.map(\.type) == [.singleLineText, .singleSelect, .multipleSelects, .date, .date, .currency, .percent, .link, .count,
-                                              .rollup, .lookup, .formula, .attachment, .singleLineText, .link])
+                                              .rollup, .lookup, .formula, .attachment, .collaborator, .link])
         #expect(projects.primaryFieldID == projectFields[0].id)
         let taskFields = document.fields(in: tasks.id)
         #expect(taskFields.map(\.name) == ["Name", "Project", "Hours", "Done", "Time spent", "Notes", "ID"])
@@ -140,12 +140,23 @@ struct AirtableImporterTests {
         #expect(website[kickoff.id].stringValue.flatMap(DateCoding.parseISO) == DateCoding.parseISO("2026-02-15T09:30:00Z"))
         #expect(website[budget.id] == .number(1250.5))
         #expect(website[try field("Progress", projects).id] == .number(0.25))
-        #expect(website[try field("Owner", projects).id] == .string("Ada Lovelace"))
-        #expect(app[try field("Owner", projects).id] == .string("grace@example.com"))
+        // Collaborators became people in the base.
+        let owner = try field("Owner", projects)
+        let ada = try #require(document.person(matching: "ada@example.com"))
+        let grace = try #require(document.person(matching: "grace@example.com"))
+        #expect(document.people.count == 2)
+        #expect(ada.name == "Ada Lovelace")
+        #expect(owner.options.allowMultipleCollaborators == nil)
+        #expect(website[owner.id] == .string(ada.id))
+        #expect(app[owner.id] == .string(grace.id))
+        #expect(document.displayString(app, owner) == "grace@example.com")
         #expect(design[try field("Done", tasks).id] == .bool(true))
         #expect(build[try field("Done", tasks).id] == .null)
         #expect(design[try field("Time spent", tasks).id] == .number(5400))
-        #expect(design[try field("Notes", tasks).id].stringValue?.contains("**Bold** idea") == true)
+        let notes = try field("Notes", tasks)
+        #expect(notes.options.richText == true)
+        #expect(design[notes.id].stringValue?.contains("**Bold** idea") == true)
+        #expect(document.displayString(design, notes) == "Bold idea\n• one")
 
         // Links resolve in both directions.
         #expect(document.compute.linkedRecordIDs(record: website, field: tasksLink) == [design.id, build.id])
@@ -180,6 +191,51 @@ struct AirtableImporterTests {
         #expect(hits.filter { $0.url.host == "files.stub.test" }.allSatisfy { $0.authorization == nil })
         let gaps = zip(apiHits.dropFirst(), apiHits).map { $0.time - $1.time }
         #expect(gaps.allSatisfy { $0 >= .milliseconds(35) })
+    }
+
+    @Test func importsPeopleBarcodesAndAIFields() async throws {
+        let stub = AirtableStub.shared
+        stub.reset()
+        stub.route("https://api.airtable.com/v0/meta/bases/appPeople/tables", .json(#"""
+        {"tables": [{"id": "tblItems", "name": "Items", "primaryFieldId": "fldName", "fields": [
+          {"id": "fldName", "name": "Name", "type": "singleLineText"},
+          {"id": "fldTeam", "name": "Team", "type": "multipleCollaborators"},
+          {"id": "fldCode", "name": "Code", "type": "barcode"},
+          {"id": "fldBy", "name": "Added by", "type": "createdBy"},
+          {"id": "fldEditor", "name": "Edited by", "type": "lastModifiedBy", "options": {"referencedFieldIds": ["fldCode"]}},
+          {"id": "fldAI", "name": "Summary", "type": "aiText", "options": {
+            "prompt": ["Summarise {", {"field": {"fieldId": "fldName"}}, "} with code ", {"field": {"fieldId": "fldCode"}}],
+            "referencedFieldIds": ["fldName", "fldCode"]}}
+        ]}]}
+        """#))
+        stub.route("https://api.airtable.com/v0/appPeople/tblItems?pageSize=100&returnFieldsByFieldId=true&cellFormat=json", .json(#"""
+        {"records": [{"id": "rec1", "createdTime": "2024-01-02T03:04:05.000Z", "fields": {
+          "fldName": "Lamp",
+          "fldTeam": [{"id": "usr1", "email": "ada@example.com", "name": "Ada"}, {"id": "usr2", "email": "grace@example.com", "name": "Grace"}],
+          "fldCode": {"text": "4006381333931", "type": "ean13"},
+          "fldBy": {"id": "usr1", "email": "ada@example.com", "name": "Ada"},
+          "fldAI": {"state": "generated", "value": "A warm lamp.", "isStale": false}}}]}
+        """#))
+
+        let (document, storage, url) = try makeBase()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let report = try await makeImporter().importBase(id: "appPeople", name: "People", into: document, storage: storage) { _, _ in }
+        let table = try #require(document.table(named: "Items"))
+        let fields = document.fields(in: table.id)
+        #expect(fields.map(\.type) == [.singleLineText, .collaborator, .barcode, .createdBy, .lastModifiedBy, .aiText])
+        #expect(report.warnings.contains { $0.contains("“Added by”") && $0.contains("Mac") })
+
+        let record = try #require(document.records(in: table.id).first)
+        let team = fields[1], code = fields[2], editedBy = fields[4], summary = fields[5]
+        #expect(team.options.allowMultipleCollaborators == true)
+        #expect(document.people.map(\.name) == ["Ada", "Grace"])
+        #expect(document.displayString(record, team) == "Ada, Grace")
+        #expect(record[code.id] == ["text": "4006381333931", "type": "ean13"])
+        #expect(editedBy.options.watchedFieldIDs == [code.id])
+        #expect(document.displayString(record, fields[3]) == "Test Mac")
+        #expect(record[summary.id] == "A warm lamp.")
+        #expect(summary.options.aiPrompt == "Summarise \\{{\(fields[0].id)}\\} with code {\(code.id)}")
+        #expect(try document.renderAIPrompt(field: summary, record: record) == "Summarise {Lamp} with code 4006381333931")
     }
 
     @Test func cancellingBeforeTheFirstRequestLeavesTheDocumentEmpty() async throws {

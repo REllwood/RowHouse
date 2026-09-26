@@ -264,6 +264,10 @@ struct TemplateBuilder {
         if let grid = doc.views(in: tasks.id).first {
             doc.updateViewConfig(grid.id) { $0.groups = [SortSpec(fieldID: taskProject.id)] ; $0.summaries = [estimate: .sum] }
         }
+        if var statusOptions = doc.field(taskStatus.id)?.options {
+            statusOptions.defaultValue = .string(taskStatus.choice["Todo"]!)
+            doc.updateField(taskStatus.id, options: statusOptions)
+        }
         view(tasks.id, "By status", .kanban) { $0.stackFieldID = taskStatus.id }
 
         var blocked = AutomationTrigger(kind: .recordMatchesConditions, tableID: projects.id)

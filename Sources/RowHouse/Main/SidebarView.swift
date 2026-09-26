@@ -7,6 +7,7 @@ struct SidebarView: View {
     @State private var renaming: RenameTarget?
     @State private var renameText = ""
     @State private var confirmDelete: DeleteTarget?
+    @State private var collaboratorsBase: String?
     @State private var collapsed: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "RowHouse.sidebar.collapsed") ?? [])
 
     var body: some View {
@@ -46,6 +47,11 @@ struct SidebarView: View {
         } message: {
             Text(confirmDelete?.message ?? "")
         }
+        .sheet(isPresented: Binding(get: { collaboratorsBase != nil }, set: { if !$0 { collaboratorsBase = nil } })) {
+            if let document = app.session(collaboratorsBase)?.document {
+                CollaboratorsSheet(document: document)
+            }
+        }
     }
 
     private func expandedBinding(_ id: String) -> Binding<Bool> {
@@ -70,6 +76,7 @@ struct SidebarView: View {
             let id = session.document.createTable(name: "Table \(session.document.tables.count + 1)")
             state.destination = .table(base: session.id, table: id)
         }
+        Button("Collaborators…") { collaboratorsBase = session.id }
         Divider()
         Button("Show in Finder") { app.revealInFinder(session.id) }
         Divider()

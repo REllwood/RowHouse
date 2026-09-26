@@ -12,6 +12,8 @@ public final class ComputeEngine {
     private var autoNumbers: [String: [String: Int]] = [:]         // table id → record id → number
     private var evaluating: Set<String> = []
     private var titleIndex: [String: (exact: [String: String], folded: [String: String])] = [:]
+    private var peopleByID: [String: Person]?
+    private var devicePeople: [String: Person] = [:]
 
     init(document: BaseDocument) {
         self.document = document
@@ -23,6 +25,8 @@ public final class ComputeEngine {
         reverseLinks.removeAll()
         autoNumbers.removeAll()
         titleIndex.removeAll()
+        peopleByID = nil
+        devicePeople.removeAll()
         if schema { parsedFormulas.removeAll() }
     }
 
@@ -124,6 +128,17 @@ public final class ComputeEngine {
         return url
     }
 
+    /// Linked record ids a lookup, rollup or count uses: every linked record, or only those
+    /// matching the field's conditions (evaluated in the linked table).
+    public func includedLinkedRecordIDs(record: RecordModel, field: FieldModel, linkField: FieldModel) -> [String] {
+        let ids = linkedRecordIDs(record: record, field: linkField)
+        guard let filter = field.options.linkFilter, !filter.isEmpty else { return ids }
+        return ids.filter { id in
+            guard let linked = document.record(id) else { return false }
+            return document.matches(linked, filter: filter)
+        }
+    }
+
     // MARK: - Resolution
 
     private func resolve(record: RecordModel, field: FieldModel) -> CellValue {
@@ -166,7 +181,7 @@ public final class ComputeEngine {
             guard let linkField = document.field(field.options.linkFieldID),
                   let target = document.field(field.options.targetFieldID)
             else { return .error("Lookup is not configured") }
-            let ids = linkedRecordIDs(record: record, field: linkField)
+            let ids = includedLinkedRecordIDs(record: record, field: field, linkField: linkField)
             var items: [CellValue] = []
             for id in ids {
                 guard let r = document.record(id) else { continue }
@@ -183,7 +198,7 @@ public final class ComputeEngine {
                   let target = document.field(field.options.targetFieldID)
             else { return .error("Rollup is not configured") }
             guard case .success(let expr)? = parsedFormula(for: field) else { return .error("Invalid rollup formula") }
-            let ids = linkedRecordIDs(record: record, field: linkField)
+            let ids = includedLinkedRecordIDs(record: record, field: field, linkField: linkField)
             let values: [FormulaValue] = ids.compactMap { id in
                 guard let r = document.record(id) else { return nil }
                 return value(record: r, field: target).formulaValue
@@ -192,7 +207,7 @@ public final class ComputeEngine {
             return formatted(FormulaEvaluator.evaluate(expr, in: ctx), field: field)
         case .count:
             guard let linkField = document.field(field.options.linkFieldID) else { return .error("Count is not configured") }
-            return .number(Double(linkedRecordIDs(record: record, field: linkField).count))
+            return .number(Double(includedLinkedRecordIDs(record: record, field: field, linkField: linkField).count))
         case .formula:
             guard let parsed = parsedFormula(for: field) else { return .empty }
             switch parsed {
@@ -216,7 +231,41 @@ public final class ComputeEngine {
             return .number(Double(autoNumber(for: record)))
         case .button:
             return .text(field.options.buttonLabel ?? "Open")
+        case .collaborator:
+            var seen: Set<String> = []
+            var people: [Person] = []
+            for key in raw.collaboratorIDs {
+                guard let p = person(key) ?? document.person(matching: key), seen.insert(p.id).inserted else { continue }
+                people.append(p)
+            }
+            if field.options.allowMultipleCollaborators != true, people.count > 1 { people = [people[0]] }
+            return people.isEmpty ? .empty : .collaborators(people)
+        case .createdBy:
+            return devicePerson(record.createdStamp.node).map { .collaborators([$0]) } ?? .empty
+        case .lastModifiedBy:
+            let watched = field.options.watchedFieldIDs ?? []
+            let stamp = watched.isEmpty ? record.lastModifiedStamp : (watched.compactMap { record.cellStamps[$0] }.max() ?? record.createdStamp)
+            return devicePerson(stamp.node).map { .collaborators([$0]) } ?? .empty
+        case .barcode:
+            return BarcodeValue(json: raw).map { .text($0.text) } ?? .empty
+        case .aiText:
+            if let s = raw.stringValue, !s.isEmpty { return .text(s) }
+            return .empty
         }
+    }
+
+    private func person(_ id: String) -> Person? {
+        if peopleByID == nil {
+            peopleByID = Dictionary(document.people.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        return peopleByID?[id]
+    }
+
+    private func devicePerson(_ deviceID: String) -> Person? {
+        if let cached = devicePeople[deviceID] { return cached }
+        let person = document.devicePerson(deviceID)
+        if let person { devicePeople[deviceID] = person }
+        return person
     }
 
     private func formatted(_ value: FormulaValue, field: FieldModel) -> CellValue {

@@ -343,6 +343,7 @@ public enum CellComparison {
         case .choices(let cs): return cs.isEmpty ? "" : "cs:" + cs.map(\.id).joined(separator: ",")
         case .attachments(let a): return a.isEmpty ? "" : "a:" + a.map(\.id).joined(separator: ",")
         case .links(let l): return l.isEmpty ? "" : "l:" + l.map(\.id).joined(separator: ",")
+        case .collaborators(let p): return p.isEmpty ? "" : "p:" + p.map(\.id).joined(separator: ",")
         case .list(let items): return items.isEmpty ? "" : "L:" + items.map(groupKey).joined(separator: ",")
         case .error(let m): return "e:" + m
         }
@@ -391,6 +392,8 @@ enum FilterEvaluator {
             case .isExactly: return current == wanted
             default: return textCompare(c, value: value, field: field)
             }
+        case .collaborator:
+            return peopleCompare(c, value: value, field: field, document: document)
         case .date, .createdTime, .lastModifiedTime:
             return dateCompare(c, value: value)
         case .number, .currency, .percent, .duration, .rating, .count, .autoNumber:
@@ -404,6 +407,22 @@ enum FilterEvaluator {
             return textCompare(c, value: value, field: field)
         default:
             return textCompare(c, value: value, field: field)
+        }
+    }
+
+    /// Compares the people in a cell with the people named by the condition (ids, or names and
+    /// emails written by automations and scripts).
+    @MainActor
+    private static func peopleCompare(_ c: FilterCondition, value: CellValue, field: FieldModel, document: BaseDocument) -> Bool {
+        let wanted = Set((c.value?.collaboratorIDs ?? []).map { key in document.person(matching: key)?.id ?? key })
+        let current: Set<String> = { if case .collaborators(let people) = value { return Set(people.map(\.id)) } else { return [] } }()
+        switch c.op {
+        case .is, .isExactly: return current == wanted
+        case .isNot: return current != wanted
+        case .isAnyOf, .hasAnyOf: return !current.isDisjoint(with: wanted)
+        case .isNoneOf, .hasNoneOf: return current.isDisjoint(with: wanted)
+        case .hasAllOf: return wanted.isSubset(of: current)
+        default: return textCompare(c, value: value, field: field)
         }
     }
 
