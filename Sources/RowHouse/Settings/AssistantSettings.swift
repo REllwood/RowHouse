@@ -57,7 +57,7 @@ struct AssistantSettings: View {
                         .foregroundStyle(.orange)
                 }
             } footer: {
-                Text("An assistant edits your bases the way another Mac does: its changes appear here within a second and sync to your other Macs through iCloud Drive, labelled with its name, such as “Claude Code (MCP)”. Record automations don't run for its edits. If you move RowHouse, copy the setup again.")
+                Text("An assistant edits your bases the way another Mac does: its changes appear here within a second and sync to your other Macs through iCloud Drive, labelled with its name, such as “Claude Code (MCP)”. Record automations run for its edits on the base's automation host while RowHouse is open there. If you move RowHouse, copy the setup again.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -96,7 +96,8 @@ struct AssistantSettings: View {
         "Read, filter, sort and search records (list_records, get_record, search_records)",
         "Create, update and delete records, up to 100 at a time",
         "Create bases from templates, add tables and fields, rename them and change field options",
-        "Read and add record comments",
+        "Read and add record comments, including @mentions of collaborators",
+        "Fill in every field type, including collaborators, barcodes, rich text and AI fields",
     ]
 
     private var quotedForJSON: String {
@@ -108,7 +109,7 @@ struct AssistantSettings: View {
     private func snippet(for client: Client) -> String {
         switch client {
         case .claudeCode:
-            return "claude mcp add rowhouse -- '\(helperURL.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+            return "claude mcp add --scope user rowhouse -- '\(helperURL.path.replacingOccurrences(of: "'", with: "'\\''"))'"
         case .codex:
             // TOML basic strings take the same escapes as JSON (the escaped slash is turned off).
             return "[mcp_servers.rowhouse]\ncommand = \(quotedForJSON)"
