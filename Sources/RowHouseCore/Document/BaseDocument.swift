@@ -330,8 +330,24 @@ public final class BaseDocument {
     public func mergeRemote(_ ops: [ChangeOperation]) {
         guard !ops.isEmpty else { return }
         if let maxTS = ops.map(\.ts).max() { clock.observe(maxTS) }
-        let changes = apply(ops, origin: .remote)
-        notify(changes)
+        // Per-property last-writer-wins makes the order of different devices' operations irrelevant,
+        // so assistants' edits can be applied (and reported) separately from other Macs'.
+        var agentNodes: [String: Bool] = [:]
+        let byAgent = Dictionary(grouping: ops) { op in
+            if let known = agentNodes[op.ts.node] { return known }
+            let isAgent = isAgentDevice(op.ts.node)
+            agentNodes[op.ts.node] = isAgent
+            return isAgent
+        }
+        if let others = byAgent[false] { notify(apply(others, origin: .remote)) }
+        if let agents = byAgent[true] { notify(apply(agents, origin: .agent)) }
+    }
+
+    /// Whether a device id belongs to an AI assistant: registered as one, or named the way the MCP
+    /// server names itself ("<mac>-agent<N>"), which covers edits that arrive before its registration.
+    public func isAgentDevice(_ id: String) -> Bool {
+        if let device = devicesByID[id] { return device.isAgent }
+        return id.range(of: #"-agent(\d+|-[A-Za-z0-9]+)$"#, options: .regularExpression) != nil
     }
 
     /// Merges a snapshot written by another device.

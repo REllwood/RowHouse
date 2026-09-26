@@ -15,7 +15,8 @@ public protocol AutomationServices: Sendable {
 /// Runs a base's automations.
 ///
 /// To make sure an automation runs exactly once even with several Macs sharing a base:
-/// record triggers fire only on the Mac where the change was made (remote changes never fire),
+/// record triggers fire only on the Mac where the change was made (other Macs' changes never fire;
+/// changes made by AI assistants through the MCP server fire on the automation host),
 /// scheduled triggers fire only on the base's automation host, and webhooks run on the Mac that
 /// received them (the server only listens on the loopback interface).
 @MainActor
@@ -72,7 +73,9 @@ public final class AutomationEngine {
         // View edits change which records an "enters view" trigger sees, so re-baseline on schema changes too.
         if changes.automationsChanged || changes.schemaChanged { rebuildMatchingCache() }
         guard changes.hasRecordChanges else { return }
-        let fire = !changes.origin.isRemote && changes.origin.automationDepth < Self.maxChainDepth
+        // Record triggers run where the change was made: on this Mac for its own edits, and on the
+        // automation host for an assistant's edits. Other Macs' edits run on those Macs.
+        let fire = (changes.origin == .agent ? isScheduleHost : !changes.origin.isRemote) && changes.origin.automationDepth < Self.maxChainDepth
         let depth = changes.origin.automationDepth
 
         for automation in document.automations {

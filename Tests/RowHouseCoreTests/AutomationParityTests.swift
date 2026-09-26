@@ -610,3 +610,32 @@ struct GenerateTextActionTests {
         h.session.close()
     }
 }
+
+@Suite("Automations for assistant edits") @MainActor
+struct AgentAutomationTests {
+    private func remoteCreate(_ h: AutomationTests.Harness, node: String, name: String) -> ChangeOperation {
+        ChangeOperation(ts: HLC(wall: Int64(Date().timeIntervalSince1970 * 1000) + 10_000, counter: 0, node: node), kind: .record, id: RowID.record(),
+                        set: ["_table": .string(h.table), "_order": 99, "_created": 1, "_deleted": false, h.name: .string(name)])
+    }
+
+    @Test func theAutomationHostRunsTriggersForAssistantEdits() async throws {
+        let h = try await AutomationTests().harness()
+        var action = AutomationAction(kind: .sendNotification)
+        action.title = "{{trigger.record.Name}}"
+        h.doc.createAutomation(name: "Notify", trigger: AutomationTrigger(kind: .recordCreated, tableID: h.table), actions: [action], enabled: true)
+        #expect(h.doc.isAgentDevice("devA-agent1"))
+        #expect(!h.doc.isAgentDevice("devB"))
+        #expect(h.engine.isScheduleHost)
+
+        h.doc.mergeRemote([remoteCreate(h, node: "devB", name: "From another Mac"), remoteCreate(h, node: "devA-agent1", name: "From Claude")])
+        await AutomationTests().settle(h.engine)
+        #expect(h.services.notifications.map(\.0) == ["From Claude"])
+
+        // Another Mac is the host: it runs them instead.
+        h.doc.setAutomationHost("devZ")
+        h.doc.mergeRemote([remoteCreate(h, node: "devA-agent2", name: "Not here")])
+        await AutomationTests().settle(h.engine)
+        #expect(h.services.notifications.count == 1)
+        h.session.close()
+    }
+}

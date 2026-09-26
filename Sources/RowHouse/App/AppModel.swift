@@ -82,7 +82,7 @@ final class AppModel {
         session.document.currentPersonID = Me.personID(in: session.id)
         if let old = mentionObservers[session.id] { session.document.removeObserver(old) }
         mentionObservers[session.id] = session.document.addObserver { [weak self, weak session] changes in
-            guard changes.origin == .remote, !changes.createdComments.isEmpty, let self, let session else { return }
+            guard changes.origin.isRemote, !changes.createdComments.isEmpty, let self, let session else { return }
             self.notifyMentions(changes.createdComments, in: session)
         }
     }
