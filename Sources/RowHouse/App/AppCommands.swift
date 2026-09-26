@@ -25,11 +25,14 @@ extension FocusedValues {
 @MainActor
 final class GridCommandTarget {
     var addRecord: () -> Void = {}
+    var addRecordFromTemplate: (RecordTemplate) -> Void = { _ in }
     var expandSelection: () -> Void = {}
     var deleteSelection: () -> Void = {}
     var exportCSV: () -> Void = {}
+    var printView: () -> Void = {}
     var focusSearch: () -> Void = {}
     var addField: () -> Void = {}
+    var fillDown: () -> Void = {}
 }
 
 struct AppCommands: Commands {
@@ -46,13 +49,18 @@ struct AppCommands: Commands {
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(currentBase == nil)
             Divider()
-            Button("Import CSV…") { window?.csvImportSheet = true }
+            Button("Import Spreadsheet (Excel or CSV)…") { window?.csvImportSheet = true }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(window == nil)
             Button("Import from Airtable…") { window?.airtableImportSheet = true }
                 .disabled(window == nil)
             Button("Export View as CSV…") { grid?.exportCSV() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(grid == nil)
+        }
+        CommandGroup(replacing: .printItem) {
+            Button("Print View…") { grid?.printView() }
+                .keyboardShortcut("p", modifiers: [.command])
                 .disabled(grid == nil)
         }
         CommandMenu("Record") {
@@ -65,9 +73,12 @@ struct AppCommands: Commands {
             // handles selected rows when the grid has focus.
             Button("Delete Selected Records") { grid?.deleteSelection() }
                 .disabled(grid == nil)
+            Button("Fill Down") { grid?.fillDown() }
+                .keyboardShortcut("d", modifiers: [.command])
+                .disabled(grid == nil)
             Divider()
             Button("Add Field") { grid?.addField() }
-                .keyboardShortcut("f", modifiers: [.command, .option])
+                .keyboardShortcut("n", modifiers: [.command, .option])
                 .disabled(grid == nil)
         }
         CommandGroup(after: .sidebar) {
@@ -79,8 +90,24 @@ struct AppCommands: Commands {
             Button("Search Records") { grid?.focusSearch() }
                 .keyboardShortcut("f", modifiers: [.command])
                 .disabled(grid == nil)
+            Button("Search Base…") {
+                MainActor.assumeIsolated {
+                    if let base = window?.destination?.baseID { window?.searchBase = BaseSheetTarget(baseID: base) }
+                }
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .disabled(window?.destination == nil)
+            Button("Find and Replace…") { findReplace() }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(currentTable == nil)
+            Button("Find Duplicates…") { findDuplicates() }
+                .disabled(currentTable == nil)
         }
         CommandGroup(replacing: .help) {
+            Button("Keyboard Shortcuts") { window?.showShortcuts = true }
+                .keyboardShortcut("/", modifiers: [.command])
+                .disabled(window == nil)
+            Divider()
             Button("RowHouse on GitHub") { NSWorkspace.shared.open(AppInfo.repository) }
             Button("Formula Reference") { NSWorkspace.shared.open(URL(string: "https://github.com/REllwood/RowHouse#formulas")!) }
             Divider()
@@ -90,6 +117,25 @@ struct AppCommands: Commands {
 
     private var currentBase: BaseSession? {
         MainActor.assumeIsolated { AppModel.shared.session(window?.destination?.baseID) }
+    }
+
+    private var currentTable: (base: String, table: String)? {
+        guard case .table(let base, let table)? = window?.destination else { return nil }
+        return (base, table)
+    }
+
+    private func findReplace() {
+        MainActor.assumeIsolated {
+            guard let current = currentTable else { return }
+            window?.findReplaceTable = BaseSheetTarget(baseID: current.base, tableID: current.table)
+        }
+    }
+
+    private func findDuplicates() {
+        MainActor.assumeIsolated {
+            guard let current = currentTable else { return }
+            window?.duplicatesTable = BaseSheetTarget(baseID: current.base, tableID: current.table)
+        }
     }
 
     private func newTable() {

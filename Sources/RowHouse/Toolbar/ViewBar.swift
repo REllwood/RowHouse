@@ -21,11 +21,14 @@ struct ViewBar: View {
                 Button("Duplicate View") {
                     if let id = document.duplicateView(view.id) { state.viewForTable[view.tableID] = id }
                 }
+                Button(view.config.isLocked ? "Unlock View" : "Lock View") {
+                    document.updateViewConfig(view.id, actionName: view.config.isLocked ? "Unlock View" : "Lock View") { $0.locked = view.config.isLocked ? nil : true }
+                }
                 Divider()
                 Button("Delete View", role: .destructive) { document.deleteView(view.id) }
                     .disabled(document.views(in: view.tableID).count <= 1)
             } label: {
-                Label(view.name, systemImage: view.type.symbolName)
+                Label(view.name, systemImage: view.config.isLocked ? "lock.fill" : view.type.symbolName)
                     .font(.system(size: 12, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
@@ -34,8 +37,15 @@ struct ViewBar: View {
 
             Divider().frame(height: 16)
 
+            if view.config.isLocked {
+                Label("Locked", systemImage: "lock")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .help("This view's filters, sorts, grouping and fields are locked. Unlock it from the view menu.")
+            }
             if view.type != .form {
-                if view.type != .chart {
+                Group {
+                if view.type != .chart && view.type != .dashboard {
                     BarButton(title: hiddenTitle, systemImage: "eye.slash", active: !(view.config.hiddenFieldIDs ?? []).isEmpty) {
                         HideFieldsEditor(document: document, view: view)
                     }
@@ -45,22 +55,22 @@ struct ViewBar: View {
                         document.updateViewConfig(view.id, actionName: "Change Filter") { $0.filter = newFilter.isEmpty ? nil : newFilter }
                     }
                 }
-                if view.type == .grid {
+                if view.type.supportsGrouping {
                     BarButton(title: groupTitle, systemImage: "rectangle.3.group", active: !(view.config.groups ?? []).isEmpty, tint: .purple) {
                         SortEditor(document: document, tableID: view.tableID, specs: view.config.groups ?? [], mode: .group) { specs in
                             document.updateViewConfig(view.id, actionName: "Change Grouping") { $0.groups = specs.isEmpty ? nil : specs }
                         }
                     }
                 }
-                if view.type != .chart {
+                if view.type != .chart && view.type != .dashboard {
                     BarButton(title: sortTitle, systemImage: "arrow.up.arrow.down", active: !(view.config.sorts ?? []).isEmpty, tint: .orange) {
                         SortEditor(document: document, tableID: view.tableID, specs: view.config.sorts ?? [], mode: .sort) { specs in
                             document.updateViewConfig(view.id, actionName: "Change Sort") { $0.sorts = specs.isEmpty ? nil : specs }
                         }
                     }
                 }
-                if view.type == .calendar || view.type == .timeline || view.type == .kanban || view.type == .gallery {
-                    BarButton(title: "Colour", systemImage: "paintpalette", active: view.config.colorFieldID != nil, tint: .pink) {
+                if [.grid, .list, .calendar, .timeline, .gantt, .kanban, .gallery].contains(view.type) {
+                    BarButton(title: "Colour", systemImage: "paintpalette", active: view.config.colorFieldID != nil || !(view.config.colorRules ?? []).isEmpty, tint: .pink) {
                         ColorEditor(document: document, view: view)
                     }
                 }
@@ -81,6 +91,8 @@ struct ViewBar: View {
                     .help("Row height")
                 }
                 ViewTypeSettings(document: document, view: view)
+                }
+                .disabled(view.config.isLocked)
             }
         }
         .padding(.horizontal, 10)
@@ -270,28 +282,133 @@ struct ColorEditor: View {
     let document: BaseDocument
     let view: ViewModel
 
+    private enum Mode: String { case none, field, conditions }
+
     var body: some View {
         let selects = document.fields(in: view.tableID).filter { $0.type == .singleSelect }
+        let rules = view.config.colorRules ?? []
+        let mode: Mode = !rules.isEmpty ? .conditions : (view.config.colorFieldID != nil ? .field : .none)
         VStack(alignment: .leading, spacing: 10) {
             Text("Colour records").font(.headline)
-            Picker("Use the colours of", selection: Binding(get: { view.config.colorFieldID ?? "" }, set: { id in
-                document.updateViewConfig(view.id, actionName: "Change Colours") { $0.colorFieldID = id.isEmpty ? nil : id }
+            Picker("", selection: Binding(get: { mode }, set: { new in
+                document.updateViewConfig(view.id, actionName: "Change Colours") { config in
+                    switch new {
+                    case .none:
+                        config.colorFieldID = nil
+                        config.colorRules = nil
+                    case .field:
+                        config.colorRules = nil
+                        config.colorFieldID = config.colorFieldID ?? selects.first?.id
+                    case .conditions:
+                        config.colorRules = [ColorRule(color: .green)]
+                    }
+                }
             })) {
-                Text("None").tag("")
-                ForEach(selects) { f in Text(f.name).tag(f.id) }
+                Text("None").tag(Mode.none)
+                Text("By a single select field").tag(Mode.field)
+                Text("Using conditions").tag(Mode.conditions)
             }
-            if selects.isEmpty {
-                Text("Add a single select field to colour records by its options.")
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            if mode == .field {
+                Picker("Use the colours of", selection: Binding(get: { view.config.colorFieldID ?? "" }, set: { id in
+                    document.updateViewConfig(view.id, actionName: "Change Colours") { $0.colorFieldID = id.isEmpty ? nil : id }
+                })) {
+                    ForEach(selects) { f in Text(f.name).tag(f.id) }
+                }
+                if selects.isEmpty {
+                    Text("Add a single select field to colour records by its options.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if mode == .conditions {
+                ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                    ColorRuleRow(document: document, view: view, rule: rule, index: index)
+                }
+                Button {
+                    let used = Set(rules.map(\.color))
+                    let next = ChoiceColor.allCases.first { !used.contains($0) } ?? .blue
+                    document.updateViewConfig(view.id, actionName: "Change Colours") { $0.colorRules = rules + [ColorRule(color: next)] }
+                } label: {
+                    Label("Add condition", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                Text("Records take the colour of the first rule they match.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 340)
     }
 }
 
-/// Per-view-type settings (kanban stacks, calendar dates, gallery covers, timeline range).
+private struct ColorRuleRow: View {
+    let document: BaseDocument
+    let view: ViewModel
+    let rule: ColorRule
+    let index: Int
+    @State private var editing = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(ChoiceColor.allCases, id: \.self) { color in
+                    Button {
+                        update { $0.color = color }
+                    } label: {
+                        Label(color.rawValue.capitalized, systemImage: color == rule.color ? "checkmark.circle.fill" : "circle.fill")
+                    }
+                }
+            } label: {
+                Circle().fill(rule.color.swiftUI).frame(width: 14, height: 14)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            Button {
+                editing = true
+            } label: {
+                Text(summary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.borderless)
+            .popover(isPresented: $editing) {
+                FilterEditor(document: document, tableID: view.tableID, filter: rule.filter, title: "Colour records when") { group in
+                    update { $0.filter = group }
+                }
+            }
+            Button {
+                document.updateViewConfig(view.id, actionName: "Change Colours") { config in
+                    config.colorRules?.removeAll { $0.id == rule.id }
+                    if config.colorRules?.isEmpty == true { config.colorRules = nil }
+                }
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private var summary: String {
+        let conditions = rule.filter.conditions.compactMap { c in document.field(c.fieldID).map { "\($0.name) \(c.op.displayName)" } }
+        if conditions.isEmpty && rule.filter.groups.isEmpty { return "Set conditions…" }
+        let joined = conditions.joined(separator: rule.filter.conjunction == .and ? " and " : " or ")
+        return rule.filter.groups.isEmpty ? joined : joined + " …"
+    }
+
+    private func update(_ change: (inout ColorRule) -> Void) {
+        var copy = rule
+        change(&copy)
+        document.updateViewConfig(view.id, actionName: "Change Colours") { config in
+            guard let i = config.colorRules?.firstIndex(where: { $0.id == rule.id }) else { return }
+            config.colorRules?[i] = copy
+        }
+    }
+}
+
+/// Per-view-type settings (kanban stacks, list nesting, calendar dates, gallery covers, timeline
+/// and Gantt ranges and dependencies).
 struct ViewTypeSettings: View {
     let document: BaseDocument
     let view: ViewModel
@@ -306,6 +423,18 @@ struct ViewTypeSettings: View {
             fieldMenu("Cover", icon: "photo", current: view.config.coverFieldID, options: fields.filter { $0.type == .attachment }, allowNone: true) { id in
                 document.updateViewConfig(view.id, actionName: "Change Cover") { $0.coverFieldID = id }
             }
+            Toggle(isOn: Binding(get: { view.config.hideEmptyStacks ?? false }, set: { hide in
+                document.updateViewConfig(view.id, actionName: hide ? "Hide Empty Stacks" : "Show Empty Stacks") { $0.hideEmptyStacks = hide ? true : nil }
+            })) {
+                Text("Hide empty stacks").font(.system(size: 12))
+            }
+            .toggleStyle(.checkbox)
+            .fixedSize()
+            .padding(.horizontal, 4)
+        case .list:
+            fieldMenu("Nest by", icon: "list.bullet.indent", current: view.config.listChildLinkFieldID, options: fields.filter { $0.type == .link }, allowNone: true, newSelfLink: fields.contains { $0.name.lowercased() == "subtasks" } ? nil : "Subtasks") { id in
+                document.updateViewConfig(view.id, actionName: "Change Nesting") { $0.listChildLinkFieldID = id }
+            }
         case .gallery:
             fieldMenu("Cover", icon: "photo", current: view.config.coverFieldID, options: fields.filter { $0.type == .attachment }, allowNone: true) { id in
                 document.updateViewConfig(view.id, actionName: "Change Cover") { $0.coverFieldID = id }
@@ -314,12 +443,17 @@ struct ViewTypeSettings: View {
             fieldMenu("Date field", icon: "calendar", current: view.config.dateFieldID, options: fields.filter { $0.type.isDateLike || $0.type == .formula }) { id in
                 document.updateViewConfig(view.id, actionName: "Change Date Field") { $0.dateFieldID = id }
             }
-        case .timeline:
+        case .timeline, .gantt:
             fieldMenu("Start", icon: "calendar", current: view.config.dateFieldID, options: fields.filter { $0.type.isDateLike || $0.type == .formula }) { id in
                 document.updateViewConfig(view.id, actionName: "Change Start Field") { $0.dateFieldID = id }
             }
             fieldMenu("End", icon: "calendar.badge.clock", current: view.config.endDateFieldID, options: fields.filter { $0.type.isDateLike || $0.type == .formula }, allowNone: true) { id in
                 document.updateViewConfig(view.id, actionName: "Change End Field") { $0.endDateFieldID = id }
+            }
+            if view.type == .gantt {
+                fieldMenu("Depends on", icon: "arrow.triangle.branch", current: view.config.dependencyFieldID, options: fields.filter { $0.type == .link && $0.options.linkedTableID == view.tableID }, allowNone: true, newSelfLink: fields.contains { $0.name.lowercased() == "depends on" } ? nil : "Depends on") { id in
+                    document.updateViewConfig(view.id, actionName: "Change Dependencies") { $0.dependencyFieldID = id }
+                }
             }
             Picker("", selection: Binding(get: { view.config.timelineScale ?? .month }, set: { s in
                 document.updateViewConfig(view.id, actionName: "Change Scale") { $0.timelineScale = s }
@@ -328,14 +462,14 @@ struct ViewTypeSettings: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 190)
+            .frame(width: 250)
             .controlSize(.small)
         default:
             EmptyView()
         }
     }
 
-    private func fieldMenu(_ title: String, icon: String, current: String?, options: [FieldModel], allowNone: Bool = false, set: @escaping (String?) -> Void) -> some View {
+    private func fieldMenu(_ title: String, icon: String, current: String?, options: [FieldModel], allowNone: Bool = false, newSelfLink: String? = nil, set: @escaping (String?) -> Void) -> some View {
         Menu {
             if allowNone { Button("None") { set(nil) } }
             ForEach(options) { f in
@@ -345,7 +479,19 @@ struct ViewTypeSettings: View {
                     Label(f.name, systemImage: f.type.symbolName)
                 }
             }
-            if options.isEmpty { Text("No suitable fields") }
+            if options.isEmpty && newSelfLink == nil { Text("No suitable fields") }
+            if let newSelfLink {
+                Divider()
+                Button {
+                    var linkOptions = FieldOptions()
+                    linkOptions.linkedTableID = view.tableID
+                    document.batch("Add Field") {
+                        set(document.createField(in: view.tableID, name: newSelfLink, type: .link, options: linkOptions))
+                    }
+                } label: {
+                    Label("New “\(newSelfLink)” field", systemImage: "plus")
+                }
+            }
         } label: {
             Label("\(title): \(document.field(current)?.name ?? "None")", systemImage: icon)
                 .font(.system(size: 12))

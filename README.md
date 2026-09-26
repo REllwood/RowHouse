@@ -20,8 +20,9 @@
   <a href="https://github.com/REllwood/RowHouse/releases/latest"><b>Download for Mac</b></a> ·
   <a href="https://rellwood.github.io/RowHouse/">Website</a> ·
   <a href="#how-it-works">How it works</a> ·
+  <a href="#ai-assistants-mcp">AI assistants (MCP)</a> ·
   <a href="#automations">Automations</a> ·
-  <a href="#formulas">Formulas</a>
+  <a href="#compared-with-airtable">Compared with Airtable</a>
 </p>
 
 <picture>
@@ -29,7 +30,9 @@
   <img alt="RowHouse showing a project tracker grid with status chips, owners, a formula health column and progress" src=".github/assets/hero-light.png">
 </picture>
 
-RowHouse is a self-hosted, local-first alternative to Airtable for the Mac. You build bases out of tables, fields and linked records, and look at them as grids, kanban boards, calendars, galleries, timelines, forms and charts. Automations run when records change, when forms are submitted, when buttons are clicked or on a schedule.
+RowHouse is a self-hosted, local-first alternative to Airtable for the Mac. You build bases out of tables, fields and linked records, and look at them as grids, lists, kanban boards, calendars, galleries, timelines, Gantt charts, forms, charts and dashboards. Automations run when records change, when forms are submitted, when buttons are clicked, when a webhook arrives or on a schedule.
+
+AI assistants such as **Claude** and **Codex** can work with your bases too: RowHouse ships with an [MCP server](#ai-assistants-mcp), so you can ask an assistant to look things up, fill in records or build out a whole table.
 
 There's no server and no account. Each base is a folder of plain files in **iCloud Drive › RowHouse**. Every Mac you use writes its own change log and merges the others, so your bases stay in sync, even when you edit on two Macs at once or while offline.
 
@@ -42,10 +45,12 @@ There's no server and no account. Each base is a folder of plain files in **iClo
 - [Features](#features)
 - [Install](#install)
 - [How it works](#how-it-works)
+- [AI assistants (MCP)](#ai-assistants-mcp)
 - [Automations](#automations)
 - [Formulas](#formulas)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Importing and exporting](#importing-and-exporting)
+- [Compared with Airtable](#compared-with-airtable)
 - [Building from source](#building-from-source)
 - [FAQ](#faq)
 
@@ -53,21 +58,34 @@ There's no server and no account. Each base is a folder of plain files in **iClo
 
 | | |
 |---|---|
-| **7 view types** | Grid, Kanban, Calendar, Gallery, Timeline, Form and Chart. Each view has its own filters, sorts, grouping, hidden fields, colours and column widths. |
-| **24 field types** | Text, long text, email, URL, phone, number, currency, percent, duration, rating, checkbox, single and multiple select, date, attachment, link to another record, lookup, rollup, count, formula, created time, last modified time, autonumber and button. |
-| **Linked records** | Two-way relationships between tables, with lookups, rollups and counts that update as you type. |
+| **10 view types** | Grid, List (records nested under linked records), Kanban, Calendar (month or week), Gallery, Timeline, Gantt (with dependencies), Form, Chart and Dashboard. Each view has its own filters, sorts, grouping, hidden fields, colours, row height, summaries and column widths, and can be locked. |
+| **29 field types** | Text, long text (with rich text), email, URL, phone, number, currency, percent, duration, rating, checkbox, single and multiple select, date, attachment, link to another record, lookup, rollup, count, formula, created time, last modified time, created by, last modified by, autonumber, button, collaborator, barcode and AI. |
+| **AI assistants** | A built-in MCP server lets Claude Code, Codex, Claude Desktop and other MCP clients read, search, create and update records and build tables and fields. |
+| **AI fields** | Write a prompt that refers to other fields and Claude fills in the value for every record, using your own Anthropic API key. |
+| **Linked records** | Two-way relationships between tables, with lookups, rollups and counts that update as you type and can be limited to linked records that match conditions. |
 | **Formulas** | 84 Airtable-compatible functions for text, numbers, dates, arrays and regular expressions, with live validation and a built-in reference. |
-| **Automations** | 7 triggers and 8 actions: create, update, delete and find records, Mac notifications, webhooks, JavaScript scripts and Apple Shortcuts. |
-| **Spreadsheet feel** | Keyboard navigation, type-to-edit, range selection, copy and paste to and from Numbers or Excel, fill a range, undo and redo. |
-| **Forms** | Build a form from any table. Submissions create records and can start automations. |
-| **Comments** | A comment thread on every record, synced like everything else. |
+| **Automations** | 9 triggers and 11 actions, including webhooks in and out, email, JavaScript, Apple Shortcuts, Generate text with AI and repeat-for-each-item steps. |
+| **Spreadsheet feel** | Keyboard navigation, type-to-edit, range selection, copy and paste to and from Numbers or Excel, fill down, drag to reorder, undo and redo. |
+| **Collaboration** | Comments with @mentions and notifications, collaborator fields, a "current user" filter, record history showing who changed what, and a trash for everything you delete. |
+| **Tools** | Record templates, base-wide search, find and replace, find and merge duplicates, print and PDF, backups and duplicate base. |
+| **Forms** | Build a form from any table, with required fields and fields that only show when conditions are met. Submissions create records and can start automations. |
 | **Sync without a server** | Works in iCloud Drive, any synced folder, or on one Mac. Conflicts are resolved field by field, deterministically, on every device. |
-| **Import** | CSV (with field type detection) and whole bases straight from Airtable using a personal access token. |
-| **Templates** | Project Tracker, Sales CRM, Content Calendar and Inventory, each with sample data, views and working automations. |
+| **Import** | CSV and Excel (with field type detection) and whole bases straight from Airtable using a personal access token. |
+| **Templates** | Project Tracker, Sales CRM, Content Calendar and Inventory, each with sample data, views, a dashboard and working automations. |
 
 <p align="center">
   <img src=".github/assets/views-light.png" alt="Kanban, calendar, timeline and gallery views" width="100%">
 </p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/gantt-dark.png">
+  <img alt="Gantt view grouped by priority with dependency arrows and a today line" src=".github/assets/gantt-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/dashboard-dark.png">
+  <img alt="Dashboard view with record counts, a progress tile, a donut chart by status and budget by priority" src=".github/assets/dashboard-light.png">
+</picture>
 
 <p align="center">
   <img src=".github/assets/grouping-dark.png" alt="Grid grouped by linked project with duration totals" width="49%">
@@ -91,10 +109,11 @@ RowHouse is three Swift modules: a formula engine, a core library that has no UI
 ```mermaid
 flowchart LR
   subgraph App["RowHouse.app · SwiftUI + AppKit"]
-    UI["Views<br/>grid · kanban · calendar · gallery<br/>timeline · form · chart"]
-    AUTO["Automation engine<br/>triggers · actions · schedules"]
+    UI["Views<br/>grid · list · kanban · calendar · gallery<br/>timeline · gantt · form · chart · dashboard"]
+    AUTO["Automation engine<br/>triggers · actions · schedules · webhooks"]
     JS["Script runner<br/>JavaScriptCore"]
   end
+  MCP["rowhouse-mcp<br/>MCP server for AI assistants"]
   subgraph Core["RowHouseCore"]
     DOC["BaseDocument<br/>tables · fields · views · records · undo"]
     Q["View queries<br/>filter · sort · group · search"]
@@ -107,6 +126,7 @@ flowchart LR
 
   UI --> DOC
   UI --> Q
+  MCP --> DOC
   AUTO --> DOC
   JS --> DOC
   Q --> CE
@@ -164,15 +184,79 @@ sequenceDiagram
   <img src=".github/assets/sync.gif" alt="Edits made on another Mac appearing live in RowHouse" width="100%">
 </p>
 
-Each Mac also writes a snapshot of its merged state now and then. Opening a base loads the snapshots and replays only the log lines written after them, which keeps launch fast. Old log segments are deleted a day after a newer snapshot covers them. Files that "Optimise Mac Storage" has evicted are downloaded on demand.
+Each Mac also writes a snapshot of its merged state now and then. Opening a base loads the snapshots and replays only the log lines written after them, which keeps launch fast. Old log segments are deleted two weeks after a newer snapshot covers them, which is also how far back record history goes. Files that "Optimise Mac Storage" has evicted are downloaded on demand.
 
 ### Automations run exactly once
 
 With several Macs sharing a base, the same trigger must not fire on each of them:
 
-- **Record triggers** (created, updated, matches conditions) fire only on the Mac where the change was made. Edits that arrive from another Mac are merged but never trigger anything.
-- **Scheduled triggers** fire only on the base's *automation host*, the Mac chosen in **Settings › Automations**.
+- **Record triggers** (created, updated, matches conditions, enters view) fire only on the Mac where the change was made. Edits that arrive from another Mac are merged but never trigger anything there.
+- **Edits made by AI assistants** through the MCP server fire record triggers on the base's *automation host*, since nobody is at a keyboard where they were made.
+- **Scheduled triggers** fire only on the automation host, the Mac chosen in **Settings › Automations** (or, if none is chosen, the same Mac on every device).
+- **Webhooks** run on the Mac that received them.
 - Chains of automations stop after 5 levels, and each automation is limited to 60 runs a minute.
+
+## AI assistants (MCP)
+
+RowHouse includes `rowhouse-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io) server inside the app bundle. Connect it to an AI assistant and you can ask things like *"add these five leads to the CRM"*, *"which projects are overdue?"* or *"make a table for our reading list with an author, a rating and a status"*.
+
+**Claude Code**
+
+```bash
+claude mcp add --scope user rowhouse -- /Applications/RowHouse.app/Contents/MacOS/rowhouse-mcp
+```
+
+**Codex** (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.rowhouse]
+command = "/Applications/RowHouse.app/Contents/MacOS/rowhouse-mcp"
+```
+
+**Claude Desktop** (Settings › Developer › Edit Config, then restart Claude)
+
+```json
+{
+  "mcpServers": {
+    "rowhouse": {
+      "command": "/Applications/RowHouse.app/Contents/MacOS/rowhouse-mcp"
+    }
+  }
+}
+```
+
+**Settings › AI Assistants** in RowHouse shows the same snippets with the right path for your copy of the app, ready to copy.
+
+| Tool | What it does |
+|---|---|
+| `list_bases`, `get_base_schema` | Bases, tables, fields (with types and options) and views |
+| `list_records`, `get_record`, `search_records` | Read records, with views, Airtable-style `filter_formula`, sorting, paging and base-wide search |
+| `create_records`, `update_records`, `delete_records` | Up to 100 records per call, validated before anything is written; `typecast` adds missing select options and collaborators |
+| `create_table`, `update_table`, `create_field`, `update_field` | Build and change the schema, including links, lookups, rollups, formulas and AI fields |
+| `list_comments`, `add_comment` | Read and write record comments |
+| `create_base`, `describe_field_types` | Start a base from a template, and learn every field type's JSON format |
+
+Tables, fields and records can be named instead of using ids. Values use the same JSON shapes as Airtable's REST API.
+
+```mermaid
+flowchart LR
+  AI["Claude Code · Codex · Claude Desktop"] -- "MCP over stdio" --> H["rowhouse-mcp<br/>(its own device: …-agent0)"]
+  H -- "append ops" --> LOG[("devices/…-agent0/log-….jsonl")]
+  LOG -- "FSEvents · iCloud Drive" --> APP["RowHouse on your Macs<br/>merge live · run automations on the host"]
+```
+
+The server writes to your bases the same way another Mac does: into its own change log, as its own device. Its edits show up in the app within a second, sync to your other Macs, and appear in record history as "Claude Code (MCP)" or "Codex (MCP)". Record automations run for them on the base's automation host. Two assistants running at once each get their own device folder, so they never write to the same file.
+
+If your bases are in iCloud Drive and the assistant can't see them, allow the app that runs it (Terminal, your editor, Claude or Codex) to access iCloud Drive in **System Settings › Privacy & Security › Files & Folders**.
+
+### AI fields and actions
+
+Add your Anthropic API key in **Settings › Claude AI** (it's kept in your Keychain), then:
+
+- **AI field**: write a prompt such as `Summarise {Notes} in one sentence for {Client}`. Generate a single cell from the record, or every empty cell in a view from the column menu.
+- **Generate text with AI** automation action: its output is available to later steps as `{{steps.N.text}}`, for example to fill in a field or write an email.
+
+Prompts and the field values they mention are sent to Anthropic's API only when you generate. Claude Opus 5 is the default; Sonnet 5 and Haiku 4.5 can be chosen per field or per step.
 
 ## Automations
 
@@ -185,13 +269,17 @@ With several Macs sharing a base, the same trigger must not fire on each of them
 | When a record is created | Create record |
 | When a record is updated (optionally only for chosen fields) | Update record |
 | When a record matches conditions | Delete record |
-| When a form is submitted | Find records |
-| At a scheduled time (every few minutes, hourly, daily, weekly, monthly) | Send Mac notification |
+| When a record enters a view | Find records |
+| When a form is submitted | Send Mac notification |
+| At a scheduled time (every few minutes, hourly, daily, weekly, monthly) | Send email (through Mail) |
 | When a button is clicked | Send HTTP request (webhooks, APIs) |
-| When run manually | Run JavaScript |
-| | Run an Apple Shortcut |
+| When a webhook is received | Run JavaScript |
+| When run manually | Run an Apple Shortcut |
+| | Generate text with AI |
 
-Any step can have its own conditions, such as "only if Status is Blocked". Every run is recorded with per-step results and logs, and you can see runs from all your Macs in **Run history**.
+Any step can have its own conditions, such as "only if Status is Blocked", and can **repeat for each item** of an earlier step's list, for example once for every record that Find records returned. Every run is recorded with per-step results and logs, and you can see runs from all your Macs in **Run history**.
+
+**Incoming webhooks** are off until you turn them on in **Settings › Webhooks**. Each webhook automation gets its own URL with a secret token, such as `http://127.0.0.1:8738/hooks/aut…/Qk7…`. The server only listens on this Mac, so other software on the Mac (or a tunnel you set up) can call it; the request's JSON, form fields and query string are available as `{{trigger.body.…}}` and `{{trigger.query.…}}`.
 
 ### Values from earlier steps
 
@@ -203,6 +291,8 @@ Text in any action can include placeholders:
 | `{{trigger.record.id}}`, `{{trigger.record.url}}` | Record id and a `rowhouse://` link that opens it |
 | `{{steps.2.count}}`, `{{steps.2.titles}}` | Output of step 2 (for example, Find records) |
 | `{{steps.3.status}}`, `{{steps.3.json.id}}` | Status and parsed JSON from an HTTP request |
+| `{{steps.4.text}}` | Text written by a Generate text with AI step |
+| `{{item.Name}}`, `{{index}}` | The current item in a step that repeats for each item |
 | `{{now}}`, `{{today}}` | Current date and time |
 
 Add `| json` to insert a value safely inside a JSON body, or `| url` for a query string: `{"name": {{trigger.record.Name | json}}}`.
@@ -261,18 +351,43 @@ Rollups use the same engine with a `values` variable, for example `SUM(values)`,
 | ⇧Return | Add a record below |
 | Space | Expand the record |
 | Delete | Clear cells, or delete the selected rows |
-| ⌘C / ⌘V | Copy and paste (tab-separated, works with Numbers, Excel and Sheets) |
+| ⌘C / ⌘X / ⌘V | Copy, cut and paste (tab-separated, works with Numbers, Excel and Sheets) |
+| ⌘D | Fill down |
 | ⌘Z / ⇧⌘Z | Undo and redo |
-| ⌘F | Search records |
-| ⇧⌘N · ⌥⌘T · ⌥⌘F | New base · new table · new field |
-| ⇧⌘I · ⇧⌘E | Import CSV · export the current view as CSV |
+| ⌘F · ⇧⌘F · ⌥⌘F | Search this view · search the whole base · find and replace |
+| ⇧⌘N · ⌥⌘T · ⌥⌘N | New base · new table · new field |
+| ⇧⌘I · ⇧⌘E · ⌘P | Import a spreadsheet · export the view as CSV · print the view |
+| ⌘/ | Show all keyboard shortcuts |
 
 ## Importing and exporting
 
-- **CSV import** detects numbers, currency, percentages, dates, checkboxes, emails, URLs and select options. You can create a new base or table, or add rows to an existing table and map columns to fields.
+- **CSV and Excel import** detects numbers, currency, percentages, dates, checkboxes, emails, URLs and select options. Pick a worksheet from an `.xlsx` workbook. You can create a new base or table, or add rows to an existing table and map columns to fields.
 - **Import from Airtable** copies a whole base: tables, field types, select options, linked records, lookups, rollups, formulas and attachments. You'll need a [personal access token](https://airtable.com/create/tokens) with the `schema.bases:read` and `data.records:read` scopes. The token is only kept in memory while the import runs.
 - **CSV export** saves any view, including only its visible fields and filtered records.
-- **Deep links:** `rowhouse://record?base=…&table=…&record=…` opens a record from anywhere, such as a notification, a Shortcut or another app.
+- **Print and PDF**: ⌘P prints the current view as a table (with its groups and summaries); a record's ⋯ menu prints the record with its comments. Choose **Save as PDF** in the print dialog for a PDF.
+- **Backups**: **Export Backup…** in a base's menu saves the whole base, attachments included, as a zip; **Restore Backup…** at the bottom of the sidebar brings it back as a new base.
+- **Deep links:** `rowhouse://record?base=…&table=…&record=…` opens a record from anywhere, such as a notification, a Shortcut or another app. `rowhouse://form?base=…&view=…&Name=Ada` opens a form with fields filled in.
+
+## Compared with Airtable
+
+RowHouse covers the parts of Airtable you use day to day. What's left out is mostly what needs Airtable's servers.
+
+| Airtable | RowHouse |
+|---|---|
+| Bases, tables, linked records, lookups, rollups, counts | ✅ Including rollups and lookups limited to linked records that match conditions |
+| All field types, including user, created by, last modified by, barcode, button, rich text and AI | ✅ 29 field types. "User" is a collaborator from the base's list of people, since there are no accounts |
+| Grid, list, kanban, calendar, gallery, timeline, Gantt and form views | ✅ All of them, with filters, sorts, grouping, colours (by field or conditions), summaries, row height and locked views |
+| Interfaces | 🟡 Dashboard views with numbers, charts, record lists and progress. There's no page designer for full custom interfaces |
+| Formulas | ✅ 84 functions with Airtable's syntax |
+| Automations | ✅ 9 triggers and 11 actions, conditions, repeating steps, run history. Slack, Google and other integrations go through HTTP requests, webhooks or Apple Shortcuts |
+| Scripting | ✅ Airtable's scripting API in automations and in **Run Script…** |
+| Extensions | ✅ Dedupe (Find Duplicates), page designer (Print Record), chart, scripting. No marketplace |
+| Record templates, comments, @mentions, revision history, trash, snapshots | ✅ History and trash go back two weeks; snapshots are backups you export |
+| Search, find and replace, import from CSV, Excel and Airtable | ✅ |
+| Airtable AI | ✅ AI fields and a Generate text with AI action, with your own Anthropic API key |
+| Web API | 🟡 An MCP server for AI assistants, scripts, webhooks and `rowhouse://` links instead of a hosted REST API |
+| Sharing, permissions, shared view links and embeds | ❌ There's no server. Share a base by sharing its iCloud Drive folder; everyone who can open it can edit it |
+| Synced tables between bases, mobile and web apps | ❌ Not yet. RowHouse is a Mac app |
 
 ## Building from source
 
@@ -281,7 +396,7 @@ You need Xcode 16 or later.
 ```bash
 git clone https://github.com/REllwood/RowHouse.git
 cd RowHouse
-swift test                      # 236 tests: formulas, sync, queries, automations, scripts, importers
+swift test                      # 372 tests: formulas, sync, queries, views, automations, scripts, AI, MCP, importers
 CONFIG=debug scripts/build-app.sh
 open .build/app/RowHouse.app
 ```
@@ -291,7 +406,8 @@ open .build/app/RowHouse.app
 | Module | What's in it |
 |---|---|
 | `Sources/RowHouseFormula` | Lexer, parser, evaluator and date formatting for formulas. Foundation only. |
-| `Sources/RowHouseCore` | Data model, sync, storage, computed fields, queries, automations, scripting, CSV and Airtable import, templates. No UI. |
+| `Sources/RowHouseCore` | Data model, sync, storage, computed fields, queries, automations, scripting, AI, CSV, Excel and Airtable import, templates. No UI. |
+| `Sources/RowHouseMCPKit`, `Sources/rowhouse-mcp` | The MCP server that AI assistants talk to. It's built into `RowHouse.app/Contents/MacOS/`. |
 | `Sources/RowHouse` | The SwiftUI + AppKit app. The grid is a custom-drawn `NSTableView` that stays smooth with tens of thousands of rows. |
 
 ## FAQ
@@ -300,7 +416,10 @@ open .build/app/RowHouse.app
 No. RowHouse is an independent open-source project. Airtable is a trademark of Formagrid, Inc.
 
 **Where exactly is my data?**
-In `~/Library/Mobile Documents/com~apple~CloudDocs/RowHouse`, which is iCloud Drive › RowHouse in Finder, unless you chose another folder. RowHouse never uploads your data anywhere else. The only requests it makes on its own are an optional daily update check against GitHub Releases, and whatever your automations do.
+In `~/Library/Mobile Documents/com~apple~CloudDocs/RowHouse`, which is iCloud Drive › RowHouse in Finder, unless you chose another folder. RowHouse never uploads your data anywhere else on its own. The only requests it makes are an optional daily update check against GitHub Releases, whatever your automations do, and, when you generate AI values with your own API key, the prompt and the fields it mentions going to Anthropic.
+
+**What can an AI assistant see?**
+Only what you ask it to look at, through the MCP server's tools, and only while you've connected it. The assistant's app (Claude Code, Codex or Claude Desktop) sends what it reads to its model provider, the same as anything else you show it.
 
 **Can several people share a base?**
 Anyone who can open the folder can use the base, so a shared iCloud Drive folder works. There are no per-user permissions. RowHouse is designed for you and your devices, or a small trusted team.

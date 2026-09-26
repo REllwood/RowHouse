@@ -25,6 +25,11 @@ public enum FieldType: String, Codable, CaseIterable, Sendable, Identifiable {
     case lastModifiedTime
     case autoNumber
     case button
+    case collaborator
+    case createdBy
+    case lastModifiedBy
+    case barcode
+    case aiText
 
     public var id: String { rawValue }
 
@@ -54,6 +59,11 @@ public enum FieldType: String, Codable, CaseIterable, Sendable, Identifiable {
         case .lastModifiedTime: "Last modified time"
         case .autoNumber: "Autonumber"
         case .button: "Button"
+        case .collaborator: "Collaborator"
+        case .createdBy: "Created by"
+        case .lastModifiedBy: "Last modified by"
+        case .barcode: "Barcode"
+        case .aiText: "AI text"
         }
     }
 
@@ -84,13 +94,18 @@ public enum FieldType: String, Codable, CaseIterable, Sendable, Identifiable {
         case .lastModifiedTime: "clock.arrow.circlepath"
         case .autoNumber: "textformat.123"
         case .button: "cursorarrow.click"
+        case .collaborator: "person.crop.circle"
+        case .createdBy: "person.crop.circle.badge.plus"
+        case .lastModifiedBy: "person.crop.circle.badge.clock"
+        case .barcode: "barcode"
+        case .aiText: "sparkles"
         }
     }
 
     /// Values computed from other data; users cannot type into these cells.
     public var isComputed: Bool {
         switch self {
-        case .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button: true
+        case .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button, .createdBy, .lastModifiedBy: true
         default: false
         }
     }
@@ -104,7 +119,7 @@ public enum FieldType: String, Codable, CaseIterable, Sendable, Identifiable {
 
     public var isTextual: Bool {
         switch self {
-        case .singleLineText, .multilineText, .email, .url, .phoneNumber: true
+        case .singleLineText, .multilineText, .email, .url, .phoneNumber, .aiText: true
         default: false
         }
     }
@@ -119,8 +134,26 @@ public enum FieldType: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Types that can be chosen as the primary (first) field of a table.
     public var canBePrimary: Bool {
         switch self {
-        case .attachment, .checkbox, .link, .multipleSelects, .rating, .button, .lookup, .rollup, .count: false
+        case .attachment, .checkbox, .link, .multipleSelects, .rating, .button, .lookup, .rollup, .count,
+             .collaborator, .createdBy, .lastModifiedBy, .aiText: false
         default: true
+        }
+    }
+
+    /// Types whose values show people (collaborators, or the Mac that made a change).
+    public var isPeople: Bool {
+        switch self {
+        case .collaborator, .createdBy, .lastModifiedBy: true
+        default: false
+        }
+    }
+
+    /// Types that can have a default value applied to new records.
+    public var supportsDefaultValue: Bool {
+        switch self {
+        case .singleLineText, .multilineText, .email, .url, .phoneNumber, .number, .currency, .percent, .duration, .rating,
+             .checkbox, .singleSelect, .multipleSelects, .date, .collaborator: true
+        default: false
         }
     }
 
@@ -129,18 +162,20 @@ public enum FieldType: String, Codable, CaseIterable, Sendable, Identifiable {
         case choice = "Choice"
         case numeric = "Numbers"
         case dates = "Dates"
+        case people = "People"
         case relational = "Relationships"
         case computed = "Computed"
     }
 
     public var category: Category {
         switch self {
-        case .singleLineText, .multilineText, .email, .url, .phoneNumber, .attachment: .basic
+        case .singleLineText, .multilineText, .email, .url, .phoneNumber, .attachment, .barcode: .basic
         case .checkbox, .singleSelect, .multipleSelects, .rating: .choice
         case .number, .currency, .percent, .duration: .numeric
         case .date, .createdTime, .lastModifiedTime: .dates
+        case .collaborator, .createdBy, .lastModifiedBy: .people
         case .link, .lookup, .rollup, .count: .relational
-        case .formula, .autoNumber, .button: .computed
+        case .formula, .autoNumber, .button, .aiText: .computed
         }
     }
 }
@@ -223,8 +258,24 @@ public struct FieldOptions: Codable, Hashable, Sendable {
     public var formula: String?
     public var resultFormat: FormulaResultFormat?
 
-    // Last modified time
+    // Last modified time / last modified by
     public var watchedFieldIDs: [String]?
+
+    // Conditional lookups, rollups and counts: only linked records matching this filter are used.
+    public var linkFilter: FilterGroup?
+
+    // Collaborator
+    public var allowMultipleCollaborators: Bool?
+
+    // Long text
+    public var richText: Bool?
+
+    // AI text: a prompt with `{fldID}` references, and an optional model id overriding the default.
+    public var aiPrompt: String?
+    public var aiModel: String?
+
+    /// Stored value given to new records that don't provide one. Dates also accept `{"today": true}`.
+    public var defaultValue: JSONValue?
 
     // Button
     public var buttonLabel: String?

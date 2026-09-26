@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         UpdateChecker.shared.checkAutomaticallyIfNeeded()
         MainActor.assumeIsolated { StatusItemController.shared.start() }
+        MainActor.assumeIsolated { WebhookServer.shared.start() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -77,6 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .list]
+    }
+
+    /// Clicking a mention notification opens the record.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let link = response.notification.request.content.userInfo["link"] as? String,
+              let url = URL(string: link), url.scheme == "rowhouse" else { return }
+        await MainActor.run { _ = NSWorkspace.shared.open(url) }
     }
 }
 

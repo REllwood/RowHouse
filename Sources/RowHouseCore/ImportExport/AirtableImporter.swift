@@ -486,6 +486,8 @@ final class AirtableBaseBuilder {
     private var tableIDs: [String: String] = [:]
     private var fieldIDs: [String: String] = [:]
     private var recordIDs: [String: String] = [:]
+    /// Airtable collaborator (user id, else email, else name) → RowHouse person id.
+    private var personIDs: [String: String] = [:]
     private var warnings: [String] = []
 
     init(document: BaseDocument, tables: [AirtableTable], records: [String: [AirtableRecord]], attachments: [String: AttachmentInfo]) {
@@ -510,9 +512,11 @@ final class AirtableBaseBuilder {
 
         withoutUndo {
             document.batch("Import from Airtable") {
+                createPeople()
                 createTables()
                 createFields()
                 configureComputedFields()
+                configureAIFields()
                 applyFieldOrder()
             }
         }
@@ -640,7 +644,7 @@ final class AirtableBaseBuilder {
                     Self.applyResult(o["result"], to: &options)
                 case .count:
                     options.linkFieldID = o["recordLinkFieldId"]?.stringValue.flatMap { fieldIDs[$0] }
-                case .lastModifiedTime:
+                case .lastModifiedTime, .lastModifiedBy:
                     let referenced = Set(o["referencedFieldIds"]?.stringArray ?? [])
                     let others = Set(table.fields.map(\.id)).subtracting([field.id])
                     if !referenced.isEmpty && !others.isSubset(of: referenced) {
@@ -654,6 +658,54 @@ final class AirtableBaseBuilder {
                 let isPrimary = field.id == table.primaryFieldID
                 document.updateField(id, type: isPrimary ? plan.type : nil, options: options)
             }
+        }
+    }
+
+    /// AI prompts arrive as a list of text pieces and field references (or as text with `{fld…}`
+    /// references); both become RowHouse prompts with `{fieldID}` references.
+    private func configureAIFields() {
+        for table in tables {
+            for field in table.fields {
+                guard let plan = plans[field.id], plan.type == .aiText, let id = fieldIDs[field.id],
+                      let prompt = aiPrompt(field.options["prompt"], in: table), !prompt.isEmpty,
+                      var options = document.field(id)?.options else { continue }
+                options.aiPrompt = prompt
+                document.updateField(id, options: options)
+            }
+        }
+    }
+
+    private func aiPrompt(_ value: JSONValue?, in table: AirtableTable) -> String? {
+        func escaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "{", with: "\\{").replacingOccurrences(of: "}", with: "\\}")
+        }
+        switch value {
+        case .string(let text):
+            return PromptTemplate.rewriteReferences(in: text) { ref in
+                if let entry = fieldsByID[ref], entry.table.id == table.id { return fieldIDs[ref] }
+                if let named = table.fields.first(where: { $0.name == ref }) { return fieldIDs[named.id] }
+                return nil
+            }
+        case .array(let pieces):
+            var out = ""
+            for piece in pieces {
+                if let text = piece.stringValue {
+                    out += escaped(text)
+                } else if let airtableID = piece["field"]?["fieldId"]?.stringValue ?? piece["fieldId"]?.stringValue {
+                    if let entry = fieldsByID[airtableID], entry.table.id == table.id, let id = fieldIDs[airtableID] {
+                        out += "{\(id)}"
+                    } else {
+                        let name = fieldsByID[airtableID]?.field.name ?? airtableID
+                        out += escaped(name)
+                        warnings.append("An AI prompt in “\(table.name)” refers to “\(name)”, which couldn't be imported; it was left as text.")
+                    }
+                } else if let text = piece["text"]?.stringValue {
+                    out += escaped(text)
+                }
+            }
+            return out
+        default:
+            return nil
         }
     }
 
@@ -702,8 +754,20 @@ final class AirtableBaseBuilder {
         switch field.type {
         case "singleLineText":
             plan = Plan(type: .singleLineText, mode: .value)
-        case "multilineText", "richText":
+        case "multilineText":
             plan = Plan(type: .multilineText, mode: .value)
+        case "richText":
+            options.richText = true
+            plan = Plan(type: .multilineText, options: options, mode: .value)
+        case "singleCollaborator", "multipleCollaborators":
+            if field.type == "multipleCollaborators" { options.allowMultipleCollaborators = true }
+            plan = Plan(type: .collaborator, options: options, mode: .value)
+        case "createdBy", "lastModifiedBy":
+            let kind: FieldType = field.type == "createdBy" ? .createdBy : .lastModifiedBy
+            warnings.append("“\(field.name)” in “\(table.name)” now shows the Mac that \(kind == .createdBy ? "created" : "last edited") each record in RowHouse, not the Airtable user.")
+            plan = Plan(type: kind, mode: .none)
+        case "barcode":
+            plan = Plan(type: .barcode, mode: .value)
         case "email":
             plan = Plan(type: .email, mode: .value)
         case "url":
@@ -776,8 +840,7 @@ final class AirtableBaseBuilder {
         case "button":
             plan = Plan(type: .button, mode: .none)
         case "aiText":
-            warnings.append("“\(field.name)” in “\(table.name)” is an AI field; its current text was imported as long text.")
-            plan = Plan(type: .multilineText, mode: .text)
+            plan = Plan(type: .aiText, mode: .value)
         default:
             warnings.append("“\(field.name)” in “\(table.name)” is \(Self.describe(field.type)) field, which RowHouse doesn't have; its values were imported as text.")
             plan = textPlan(field, in: table)
@@ -1073,9 +1136,74 @@ final class AirtableBaseBuilder {
         case .attachment:
             let infos = (raw.arrayValue ?? []).compactMap { $0["id"]?.stringValue.flatMap { attachments[$0] } }
             return infos.isEmpty ? nil : JSONValue(encoding: infos)
-        case .link, .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button:
+        case .collaborator:
+            let ids = Self.collaborators(raw).compactMap { personIDs[Self.personKey($0)] }
+            guard let first = ids.first else { return nil }
+            return plan.options.allowMultipleCollaborators == true ? .array(ids.map(JSONValue.string)) : .string(first)
+        case .barcode:
+            return BarcodeValue(json: raw)?.json
+        case .aiText:
+            let text = raw["value"]?.stringValue ?? raw.stringValue ?? Self.displayText(raw)
+            return text.isEmpty ? nil : .string(text)
+        case .link, .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button, .createdBy, .lastModifiedBy:
             return nil
         }
+    }
+
+    // MARK: People
+
+    /// Everyone named in collaborator fields becomes a person in the base.
+    private func createPeople() {
+        var people: [Person] = []
+        for table in tables {
+            let fieldIDs = table.fields.filter { plans[$0.id]?.type == .collaborator && plans[$0.id]?.mode == .value }.map(\.id)
+            guard !fieldIDs.isEmpty else { continue }
+            for record in records[table.id] ?? [] {
+                for fieldID in fieldIDs {
+                    guard let raw = record.fields[fieldID] else { continue }
+                    for collaborator in Self.collaborators(raw) {
+                        let key = Self.personKey(collaborator)
+                        guard personIDs[key] == nil else { continue }
+                        let email = collaborator.email ?? ""
+                        if !email.isEmpty, let existing = document.people.first(where: { $0.email.caseInsensitiveCompare(email) == .orderedSame }) {
+                            personIDs[key] = existing.id
+                            continue
+                        }
+                        let person = Person(name: collaborator.name ?? "", email: email, color: .cycling(document.people.count + people.count))
+                        people.append(person)
+                        personIDs[key] = person.id
+                    }
+                }
+            }
+        }
+        document.addPeople(people)
+    }
+
+    private struct Collaborator {
+        var id: String?
+        var email: String?
+        var name: String?
+    }
+
+    nonisolated private static func collaborators(_ value: JSONValue) -> [Collaborator] {
+        switch value {
+        case .array(let items):
+            return items.flatMap(collaborators)
+        case .object(let o):
+            let c = Collaborator(id: o["id"]?.stringValue, email: o["email"]?.stringValue, name: o["name"]?.stringValue)
+            return (c.id ?? c.email ?? c.name ?? "").isEmpty ? [] : [c]
+        case .string(let s):
+            guard !s.isEmpty else { return [] }
+            return s.contains("@") ? [Collaborator(email: s)] : [Collaborator(name: s)]
+        default:
+            return []
+        }
+    }
+
+    nonisolated private static func personKey(_ c: Collaborator) -> String {
+        if let id = c.id, !id.isEmpty { return "id:" + id }
+        if let email = c.email, !email.isEmpty { return "email:" + email.lowercased() }
+        return "name:" + (c.name ?? "")
     }
 
     // MARK: Value helpers

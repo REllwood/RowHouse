@@ -95,7 +95,7 @@ extension BaseDocument {
             }
         }
 
-        let groups = (view.type == .grid ? (view.config.groups ?? []) : []).filter { field($0.fieldID) != nil }
+        let groups = (view.type.supportsGrouping ? (view.config.groups ?? []) : []).filter { field($0.fieldID) != nil }
         let sorts = (view.config.sorts ?? []).filter { field($0.fieldID) != nil }
         let keys = groups + sorts
         if !keys.isEmpty {
@@ -190,6 +190,16 @@ extension BaseDocument {
         case .and: return results.allSatisfy { $0 }
         case .or: return results.contains(true)
         }
+    }
+
+    /// The colour a view gives a record: the first matching colour rule, otherwise the colour of
+    /// its single select value when the view colours by a field. Rules with no complete condition never match.
+    public func recordColor(_ record: RecordModel, view: ViewModel) -> ChoiceColor? {
+        if let rules = view.config.colorRules, !rules.isEmpty {
+            return rules.first { evaluate(record, filter: $0.filter, strict: false) == true }?.color
+        }
+        guard let f = field(view.config.colorFieldID), f.tableID == record.tableID, case .choice(let c) = value(record, f) else { return nil }
+        return c.color
     }
 
     public func matches(_ record: RecordModel, condition: FilterCondition) -> Bool {
@@ -343,6 +353,7 @@ public enum CellComparison {
         case .choices(let cs): return cs.isEmpty ? "" : "cs:" + cs.map(\.id).joined(separator: ",")
         case .attachments(let a): return a.isEmpty ? "" : "a:" + a.map(\.id).joined(separator: ",")
         case .links(let l): return l.isEmpty ? "" : "l:" + l.map(\.id).joined(separator: ",")
+        case .collaborators(let p): return p.isEmpty ? "" : "p:" + p.map(\.id).joined(separator: ",")
         case .list(let items): return items.isEmpty ? "" : "L:" + items.map(groupKey).joined(separator: ",")
         case .error(let m): return "e:" + m
         }
@@ -391,6 +402,8 @@ enum FilterEvaluator {
             case .isExactly: return current == wanted
             default: return textCompare(c, value: value, field: field)
             }
+        case .collaborator:
+            return peopleCompare(c, value: value, field: field, document: document)
         case .date, .createdTime, .lastModifiedTime:
             return dateCompare(c, value: value)
         case .number, .currency, .percent, .duration, .rating, .count, .autoNumber:
@@ -404,6 +417,25 @@ enum FilterEvaluator {
             return textCompare(c, value: value, field: field)
         default:
             return textCompare(c, value: value, field: field)
+        }
+    }
+
+    /// Compares the people in a cell with the people named by the condition (ids, or names and
+    /// emails written by automations and scripts).
+    @MainActor
+    private static func peopleCompare(_ c: FilterCondition, value: CellValue, field: FieldModel, document: BaseDocument) -> Bool {
+        let wanted = Set((c.value?.collaboratorIDs ?? []).compactMap { key -> String? in
+            if key == Person.meToken { return document.currentPersonID ?? key }
+            return document.person(matching: key)?.id ?? key
+        })
+        let current: Set<String> = { if case .collaborators(let people) = value { return Set(people.map(\.id)) } else { return [] } }()
+        switch c.op {
+        case .is, .isExactly: return current == wanted
+        case .isNot: return current != wanted
+        case .isAnyOf, .hasAnyOf: return !current.isDisjoint(with: wanted)
+        case .isNoneOf, .hasNoneOf: return current.isDisjoint(with: wanted)
+        case .hasAllOf: return wanted.isSubset(of: current)
+        default: return textCompare(c, value: value, field: field)
         }
     }
 

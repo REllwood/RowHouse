@@ -4,9 +4,11 @@ public enum TriggerKind: String, Codable, CaseIterable, Sendable {
     case recordCreated
     case recordUpdated
     case recordMatchesConditions
+    case recordEntersView
     case formSubmitted
     case scheduled
     case buttonClicked
+    case webhookReceived
     case manual
 
     public var displayName: String {
@@ -14,9 +16,11 @@ public enum TriggerKind: String, Codable, CaseIterable, Sendable {
         case .recordCreated: "When a record is created"
         case .recordUpdated: "When a record is updated"
         case .recordMatchesConditions: "When a record matches conditions"
+        case .recordEntersView: "When a record enters a view"
         case .formSubmitted: "When a form is submitted"
         case .scheduled: "At a scheduled time"
         case .buttonClicked: "When a button is clicked"
+        case .webhookReceived: "When a webhook is received"
         case .manual: "When run manually"
         }
     }
@@ -26,9 +30,11 @@ public enum TriggerKind: String, Codable, CaseIterable, Sendable {
         case .recordCreated: "plus.rectangle.on.rectangle"
         case .recordUpdated: "pencil.line"
         case .recordMatchesConditions: "line.3.horizontal.decrease.circle"
+        case .recordEntersView: "tray.and.arrow.down"
         case .formSubmitted: "list.bullet.rectangle"
         case .scheduled: "clock"
         case .buttonClicked: "cursorarrow.click"
+        case .webhookReceived: "point.3.connected.trianglepath.dotted"
         case .manual: "play.circle"
         }
     }
@@ -36,7 +42,7 @@ public enum TriggerKind: String, Codable, CaseIterable, Sendable {
     /// Whether the trigger provides a record to later steps.
     public var providesRecord: Bool {
         switch self {
-        case .scheduled, .manual: false
+        case .scheduled, .manual, .webhookReceived: false
         default: true
         }
     }
@@ -125,13 +131,16 @@ public struct AutomationTrigger: Codable, Hashable, Sendable {
     public var watchedFieldIDs: [String]?
     /// recordMatchesConditions: fire when a record starts matching this filter.
     public var filter: FilterGroup?
-    /// formSubmitted: the form view.
+    /// formSubmitted: the form view. recordEntersView: the view whose filter records enter.
     public var viewID: String?
     public var schedule: Schedule?
+    /// webhookReceived: the secret that must appear in the webhook URL.
+    public var webhookToken: String?
 
     public init(kind: TriggerKind, tableID: String? = nil) {
         self.kind = kind
         self.tableID = tableID
+        if kind == .webhookReceived { webhookToken = Webhooks.makeToken() }
     }
 }
 
@@ -144,6 +153,8 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
     case httpRequest
     case runScript
     case runShortcut
+    case sendEmail
+    case generateText
 
     public var displayName: String {
         switch self {
@@ -155,6 +166,8 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
         case .httpRequest: "Send HTTP request"
         case .runScript: "Run JavaScript"
         case .runShortcut: "Run Shortcut"
+        case .sendEmail: "Send email"
+        case .generateText: "Generate text with AI"
         }
     }
 
@@ -168,6 +181,8 @@ public enum ActionKind: String, Codable, CaseIterable, Sendable {
         case .httpRequest: "network"
         case .runScript: "curlybraces"
         case .runShortcut: "square.stack.3d.up"
+        case .sendEmail: "envelope"
+        case .generateText: "sparkles"
         }
     }
 }
@@ -177,12 +192,20 @@ public struct AutomationAction: Codable, Hashable, Sendable, Identifiable {
     public var kind: ActionKind
     /// Optional per-step label shown in the editor and run history.
     public var label: String?
-    /// Only run this step when the trigger record matches these conditions.
+    /// Only run this step when the trigger record (or, when repeating over records, the current
+    /// item's record) matches these conditions.
     public var condition: FilterGroup?
+
+    // Repeat for each
+    /// 1-based number of an earlier step whose output list this step runs once per item of.
+    public var repeatFrom: Int?
+    /// Path of the list inside that step's output (defaults to "records", or "items" when that step
+    /// repeats too).
+    public var repeatPath: String?
 
     // Records
     public var tableID: String?
-    /// Template resolving to a record id; defaults to the trigger record.
+    /// Template resolving to a record id; defaults to the trigger record, or the item when repeating.
     public var recordIDTemplate: String?
     /// Field id → value template.
     public var fieldValues: [String: String]?
@@ -203,6 +226,16 @@ public struct AutomationAction: Codable, Hashable, Sendable, Identifiable {
     /// Named inputs made available to scripts through `input.config()`.
     public var inputs: [String: String]?
     public var shortcutName: String?
+
+    // Email (comma-separated, templated recipients; the message text is `body`)
+    public var to: String?
+    public var cc: String?
+    public var bcc: String?
+    public var subject: String?
+
+    // AI (templated prompt; nil model means the default chosen in Settings)
+    public var prompt: String?
+    public var aiModel: String?
 
     public init(id: String = RowID.action(), kind: ActionKind) {
         self.id = id

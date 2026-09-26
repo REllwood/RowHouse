@@ -8,6 +8,8 @@ struct FieldConfigView: View {
     let tableID: String
     let fieldID: String?
     var insertAfter: String?
+    /// Used by the default-value editor; found from the app when not given.
+    var session: BaseSession?
     let close: () -> Void
 
     @State private var name = ""
@@ -17,6 +19,9 @@ struct FieldConfigView: View {
     @State private var formulaText = ""
     @State private var rollupText = "SUM(values)"
     @State private var buttonURLText = ""
+    @State private var aiPromptText = ""
+    @State private var conditionsEnabled = false
+    @State private var hasAPIKey = true
     @State private var loaded = false
     @State private var showDescription = false
 
@@ -28,7 +33,10 @@ struct FieldConfigView: View {
             TextField("Field name", text: $name, prompt: Text(type.displayName))
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 14, weight: .medium))
-            TypePicker(type: $type, allowed: isPrimary ? FieldType.allCases.filter(\.canBePrimary) : FieldType.allCases, disabled: existing?.isInverseLink == true)
+            TypePicker(type: Binding(get: { type }, set: { newType in
+                if newType != type { options.defaultValue = nil }
+                type = newType
+            }), allowed: isPrimary ? FieldType.allCases.filter(\.canBePrimary) : FieldType.allCases, disabled: existing?.isInverseLink == true)
             if showDescription || !description.isEmpty {
                 TextField("Description", text: $description, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
@@ -36,6 +44,7 @@ struct FieldConfigView: View {
             }
             Divider()
             optionsEditor
+            defaultValueSection
             if let existing, existing.type != type, document.recordCount(in: tableID) > 0, !type.isComputed {
                 Label("Existing values will be converted to \(type.displayName.lowercased()).", systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)
@@ -61,7 +70,7 @@ struct FieldConfigView: View {
             }
         }
         .padding(16)
-        .frame(width: 420)
+        .frame(width: showsConditions ? 600 : 420)
         .onAppear(perform: load)
     }
 
@@ -76,7 +85,13 @@ struct FieldConfigView: View {
             formulaText = document.formulaWithFieldNames(f.options.formula ?? "", tableID: tableID)
             rollupText = f.options.rollupFormula ?? "SUM(values)"
             buttonURLText = document.formulaWithFieldNames(f.options.buttonURLFormula ?? "", tableID: tableID)
+            aiPromptText = document.aiPromptWithFieldNames(f.options.aiPrompt ?? "", tableID: tableID)
+            conditionsEnabled = f.options.linkFilter != nil
         }
+    }
+
+    private var showsConditions: Bool {
+        [.lookup, .rollup, .count].contains(type) && conditionsEnabled
     }
 
     private var validationError: String? {
@@ -96,6 +111,8 @@ struct FieldConfigView: View {
             return nil
         case .count:
             return options.linkFieldID == nil ? "Choose a link field" : nil
+        case .aiText:
+            return document.validateAIPrompt(aiPromptText, tableID: tableID, excludingFieldID: fieldID)
         default:
             return nil
         }
@@ -166,8 +183,176 @@ struct FieldConfigView: View {
             Text("Automatically numbers records in the order they were created.").font(.callout).foregroundStyle(.secondary)
         case .attachment:
             Text("Add images, PDFs or any file. Files are stored inside the base in iCloud Drive.").font(.callout).foregroundStyle(.secondary)
+        case .multilineText:
+            Toggle("Enable rich text formatting", isOn: Binding(get: { options.richText == true }, set: { options.richText = $0 ? true : nil }))
+            Text("Bold, italics, headings, lists, links and code, stored as Markdown. The grid and exports show plain text.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .collaborator:
+            Toggle("Allow adding multiple collaborators", isOn: Binding(get: { options.allowMultipleCollaborators == true }, set: { options.allowMultipleCollaborators = $0 ? true : nil }))
+            Text(document.people.isEmpty
+                 ? "This base has no collaborators yet. Add people from a cell, or choose Collaborators… from the base's menu in the sidebar."
+                 : "Choose from the \(document.people.count) \(document.people.count == 1 ? "person" : "people") in this base. Manage them with Collaborators… in the base's menu in the sidebar.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .createdBy:
+            Text("Shows the Mac that created each record, using the name set in System Settings › General › About.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .lastModifiedBy:
+            Text("Shows the Mac that last edited each record.").font(.callout).foregroundStyle(.secondary)
+            FieldMultiPicker(title: "Only when these fields change", document: document, tableID: tableID, selection: Binding(get: { Set(options.watchedFieldIDs ?? []) }, set: { options.watchedFieldIDs = $0.isEmpty ? nil : Array($0) }), exclude: fieldID)
+        case .barcode:
+            Text("Type or paste a barcode's text. Records show it as a Code 128 barcode or, when you choose QR code, a QR code.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .aiText:
+            aiOptions
         default:
             EmptyView()
+        }
+    }
+
+    // MARK: - AI
+
+    @ViewBuilder
+    private var aiOptions: some View {
+        let insertable = document.fields(in: tableID).filter { $0.id != fieldID && $0.type != .button && !$0.name.contains("}") && !$0.name.contains("{") }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Prompt").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Menu("Insert field") {
+                    ForEach(insertable) { f in
+                        Button {
+                            aiPromptText += "{\(f.name)}"
+                        } label: {
+                            Label(f.name, systemImage: f.type.symbolName)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .controlSize(.small)
+            }
+            TextField("e.g. Write a one-sentence summary of {Notes}", text: $aiPromptText, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(3...8)
+            Text("Use {Field name} to include a field's value. Write \\{ for a literal brace.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !aiPromptText.isEmpty, let error = validationError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            Picker("Model", selection: Binding(get: { options.aiModel ?? "" }, set: { options.aiModel = $0.isEmpty ? nil : $0 })) {
+                Text("Default (\(AIModel.displayName(for: AIConfiguration.defaultModel)))").tag("")
+                ForEach(AIModel.allCases) { Text($0.displayName).tag($0.rawValue) }
+                if let custom = options.aiModel, AIModel(rawValue: custom) == nil {
+                    Text(custom).tag(custom)
+                }
+            }
+            if !hasAPIKey {
+                Label("Add your Anthropic API key in Settings › Claude AI to generate values.", systemImage: "key")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            Text("Generate a value from a record, or for a whole view from the column menu. Values are stored as text, so you can edit them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { hasAPIKey = AIConfiguration.resolvedAPIKey() != nil }
+    }
+
+    // MARK: - Default value
+
+    private var resolvedSession: BaseSession? {
+        session ?? AppModel.shared.session(document.baseID)
+    }
+
+    /// The field as currently configured here, for editors that need one.
+    private var draftField: FieldModel {
+        FieldModel(id: fieldID ?? "fldDefaultValueDraft", tableID: tableID, name: name, type: type, options: options)
+    }
+
+    @ViewBuilder
+    private var defaultValueSection: some View {
+        if type.supportsDefaultValue, existing?.isInverseLink != true {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Default value").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    if options.defaultValue != nil {
+                        Button("Clear") { options.defaultValue = nil }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                    }
+                }
+                defaultValueEditor
+                    .id(type)
+                Text("New records start with this value.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var defaultValueEditor: some View {
+        switch type {
+        case .singleSelect, .multipleSelects:
+            let current = options.defaultValue.map { $0.stringValue.map { [$0] } ?? $0.stringArray } ?? []
+            ChoicePickerMenu(field: draftField, selected: Binding(get: { Set(current) }, set: { ids in
+                let ordered = (options.choices ?? []).map(\.id).filter { ids.contains($0) }
+                if ordered.isEmpty {
+                    options.defaultValue = nil
+                } else {
+                    options.defaultValue = type == .singleSelect ? .string(ordered[0]) : .array(ordered.map(JSONValue.string))
+                }
+            }), allowsMultiple: type == .multipleSelects)
+        case .date:
+            let isToday = options.defaultValue?["today"]?.boolValue == true
+            let fixed = options.defaultValue?.stringValue.flatMap { DateCoding.decode($0) }
+            HStack {
+                Picker("", selection: Binding(get: { isToday ? 1 : (fixed != nil ? 2 : 0) }, set: { mode in
+                    switch mode {
+                    case 1: options.defaultValue = ["today": true]
+                    case 2: options.defaultValue = .string(DateCoding.encode(fixed ?? Date(), includeTime: false))
+                    default: options.defaultValue = nil
+                    }
+                })) {
+                    Text("None").tag(0)
+                    Text("Today").tag(1)
+                    Text("Date").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                if let fixed, !isToday {
+                    DatePicker("", selection: Binding(get: { fixed }, set: { options.defaultValue = .string(DateCoding.encode($0, includeTime: false)) }), displayedComponents: .date)
+                        .labelsHidden()
+                }
+            }
+        case .collaborator:
+            let multi = options.allowMultipleCollaborators == true
+            PeoplePickerMenu(document: document, selected: Binding(get: { options.defaultValue?.collaboratorIDs ?? [] }, set: { ids in
+                if ids.isEmpty {
+                    options.defaultValue = nil
+                } else {
+                    options.defaultValue = multi ? .array(ids.map(JSONValue.string)) : .string(ids[0])
+                }
+            }), allowsMultiple: multi, placeholder: "None")
+        case .checkbox:
+            Toggle("Checked", isOn: Binding(get: { options.defaultValue?.boolValue == true }, set: { options.defaultValue = $0 ? .bool(true) : nil }))
+                .toggleStyle(.checkbox)
+        default:
+            if let session = resolvedSession {
+                FieldValueEditor(session: session, field: draftField, value: Binding(get: { options.defaultValue ?? .null }, set: {
+                    options.defaultValue = $0.isEmptyCell ? nil : $0
+                }), style: .form)
+            }
         }
     }
 
@@ -241,8 +426,13 @@ struct FieldConfigView: View {
                 .foregroundStyle(.secondary)
         } else {
             Picker("Linked field", selection: Binding(get: { options.linkFieldID ?? "" }, set: {
+                let linkedTable = document.field(options.linkFieldID)?.options.linkedTableID
                 options.linkFieldID = $0.isEmpty ? nil : $0
                 options.targetFieldID = nil
+                if document.field(options.linkFieldID)?.options.linkedTableID != linkedTable {
+                    options.linkFilter = nil
+                    conditionsEnabled = false
+                }
             })) {
                 Text("Choose…").tag("")
                 ForEach(linkFields) { f in Text("\(f.name) → \(document.table(f.options.linkedTableID)?.name ?? "")").tag(f.id) }
@@ -262,6 +452,16 @@ struct FieldConfigView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                 resultFormatPicker
+            }
+            if let link = document.field(options.linkFieldID), let target = link.options.linkedTableID, document.table(target) != nil {
+                Toggle("Only include linked records that meet conditions", isOn: Binding(get: { conditionsEnabled }, set: { enabled in
+                    conditionsEnabled = enabled
+                    if enabled && options.linkFilter == nil { options.linkFilter = FilterGroup() }
+                }))
+                if conditionsEnabled {
+                    FilterEditor(document: document, tableID: target, filter: options.linkFilter ?? FilterGroup(), title: "", immediate: true) { options.linkFilter = $0 }
+                        .id(target)
+                }
             }
         }
     }
@@ -283,8 +483,13 @@ struct FieldConfigView: View {
         case .formula: opts.formula = formulaText
         case .rollup: opts.rollupFormula = rollupText
         case .button: opts.buttonURLFormula = buttonURLText.isEmpty ? nil : buttonURLText
+        case .aiText: opts.aiPrompt = aiPromptText
         default: break
         }
+        if ![.lookup, .rollup, .count].contains(type) || !conditionsEnabled || opts.linkFilter?.isEmpty != false {
+            opts.linkFilter = nil
+        }
+        if !type.supportsDefaultValue { opts.defaultValue = nil }
         if let fieldID {
             document.updateField(fieldID, name: name, type: type, options: opts, description: description)
         } else {

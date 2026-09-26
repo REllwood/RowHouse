@@ -93,12 +93,15 @@ struct ViewsListPanel: View {
     private func color(for type: ViewType) -> Color {
         switch type {
         case .grid: .blue
+        case .list: .indigo
         case .kanban: .green
         case .calendar: .red
         case .gallery: .purple
         case .timeline: .orange
+        case .gantt: .mint
         case .form: .pink
         case .chart: .teal
+        case .dashboard: .cyan
         }
     }
 }

@@ -72,7 +72,21 @@ public enum FilterOperator: String, Codable, CaseIterable, Sendable {
             return [.contains, .doesNotContain, .isEmpty, .isNotEmpty]
         case .button:
             return []
+        case .collaborator:
+            return [.is, .isNot, .isAnyOf, .isNoneOf, .hasAnyOf, .hasAllOf, .hasNoneOf, .isExactly, .isEmpty, .isNotEmpty]
+        case .createdBy, .lastModifiedBy, .barcode, .aiText:
+            return [.contains, .doesNotContain, .is, .isNot, .startsWith, .endsWith, .isEmpty, .isNotEmpty]
         }
+    }
+
+    /// Operators for a particular field. Collaborator fields offer single- or multiple-person
+    /// comparisons depending on whether they allow several people.
+    public static func available(for field: FieldModel) -> [FilterOperator] {
+        guard field.type == .collaborator else { return available(for: field.type) }
+        if field.options.allowMultipleCollaborators == true {
+            return [.hasAnyOf, .hasAllOf, .hasNoneOf, .isExactly, .isEmpty, .isNotEmpty]
+        }
+        return [.is, .isNot, .isAnyOf, .isNoneOf, .isEmpty, .isNotEmpty]
     }
 }
 
@@ -118,8 +132,8 @@ public struct FilterCondition: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var fieldID: String
     public var op: FilterOperator
-    /// Text/number for scalar comparisons, choice ids (array) for selects, bool for checkboxes,
-    /// and `{"mode": RelativeDateMode, "date": "YYYY-MM-DD", "days": n}` for dates.
+    /// Text/number for scalar comparisons, choice ids (array) for selects, person ids (array) for
+    /// collaborators, bool for checkboxes, and `{"mode": RelativeDateMode, "date": "YYYY-MM-DD", "days": n}` for dates.
     public var value: JSONValue?
 
     public init(id: String = RowID.condition(), fieldID: String, op: FilterOperator, value: JSONValue? = nil) {

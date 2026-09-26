@@ -74,6 +74,8 @@ final class GridCellView: NSView {
             if case .attachments(let atts) = p.value { drawAttachments(atts, p, in: content) }
         case .lookup:
             drawLookup(p, in: content)
+        case .collaborator, .createdBy, .lastModifiedBy:
+            if case .collaborators(let people) = p.value { drawPeople(people, in: content) }
         case .button:
             drawButton(p.text, in: content)
         default:
@@ -151,6 +153,27 @@ final class GridCellView: NSView {
         }
     }
 
+    private func drawPeople(_ people: [Person], in rect: NSRect) {
+        guard !people.isEmpty else { return }
+        let height = PersonChipDrawing.height
+        var x = rect.minX
+        var y = multiline ? rect.minY + 6 : rect.midY - height / 2
+        for person in people {
+            let w = min(PersonChipDrawing.width(of: person, font: Self.chipFont), max(40, rect.width))
+            if x + w > rect.maxX && x > rect.minX {
+                if multiline && y + height * 2 + 4 < rect.maxY {
+                    x = rect.minX
+                    y += height + 4
+                } else {
+                    break
+                }
+            }
+            let chip = NSRect(x: x, y: y, width: min(w, rect.maxX - x), height: height)
+            PersonChipDrawing.draw(person, in: chip, font: Self.chipFont)
+            x += chip.width + 4
+        }
+    }
+
     private func drawRating(_ p: CellPresentation, in rect: NSRect) {
         let max = Swift.min(10, Swift.max(1, p.field.options.ratingMax ?? 5))
         let value = Int(clampedRating(p.value.numberValue, max: max))
@@ -212,6 +235,9 @@ final class GridCellView: NSView {
                 let atts = items.flatMap { v -> [AttachmentInfo] in if case .attachments(let a) = v { return a } else { return [] } }
                 drawAttachments(atts, p, in: rect)
                 return
+            case .collaborator, .createdBy, .lastModifiedBy:
+                drawPeople(items.flatMap { v -> [Person] in if case .collaborators(let people) = v { return people } else { return [] } }, in: rect)
+                return
             default:
                 break
             }
@@ -258,6 +284,10 @@ final class RowNumberCellView: NSView {
     var hovering = false { didSet { if oldValue != hovering { needsDisplay = true } } }
     var rowSelected = false { didSet { if oldValue != rowSelected { needsDisplay = true } } }
     var commentCount = 0
+    /// The record's colour (from the view's colour field), drawn as a bar on the leading edge.
+    var accent: NSColor? { didSet { if oldValue != accent { needsDisplay = true } } }
+    /// Shows a grip instead of the number on hover when rows can be dragged to reorder.
+    var draggable = false
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -265,13 +295,24 @@ final class RowNumberCellView: NSView {
             Theme.selectionFill.setFill()
             bounds.fill()
         }
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: NSColor.tertiaryLabelColor,
-        ]
-        let str = NSAttributedString(string: "\(number)", attributes: attrs)
-        let size = str.size()
-        str.draw(at: NSPoint(x: 10, y: min(bounds.midY - size.height / 2, 9)))
+        if let accent {
+            accent.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 2, y: 3, width: 4, height: max(0, bounds.height - 7)), xRadius: 2, yRadius: 2).fill()
+        }
+        if hovering && draggable,
+           let grip = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: "Drag to reorder")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [.tertiaryLabelColor]))) {
+            let s = grip.size
+            grip.draw(in: NSRect(x: 11, y: min(bounds.midY - s.height / 2, 16 - s.height / 2), width: s.width, height: s.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        } else {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let str = NSAttributedString(string: "\(number)", attributes: attrs)
+            let size = str.size()
+            str.draw(at: NSPoint(x: 10, y: min(bounds.midY - size.height / 2, 9)))
+        }
         if hovering || rowSelected {
             if let img = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Expand record")?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [.controlAccentColor]))) {

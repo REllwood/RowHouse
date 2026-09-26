@@ -17,6 +17,8 @@ struct CompactValueView: View {
             FlowLayout(spacing: 3) { ForEach(cs) { ChoiceChip(name: $0.name, color: $0.color, compact: true) } }
         case .links(let refs):
             FlowLayout(spacing: 3) { ForEach(refs) { LinkChip(title: $0.title) } }
+        case .collaborators(let people):
+            FlowLayout(spacing: 3) { ForEach(people) { PersonChip(person: $0, compact: true) } }
         case .attachments(let atts):
             HStack(spacing: 3) {
                 ForEach(atts.prefix(4)) { att in
@@ -121,11 +123,5 @@ extension BaseDocument {
     func cardFields(for view: ViewModel, excluding: Set<String>, limit: Int = 5) -> [FieldModel] {
         let primary = primaryField(of: view.tableID)?.id
         return Array(visibleFields(for: view).filter { $0.id != primary && !excluding.contains($0.id) && $0.type != .button }.prefix(limit))
-    }
-
-    /// The colour a record should use when a view colours records by a single select.
-    func recordColor(_ record: RecordModel, view: ViewModel) -> ChoiceColor? {
-        guard let f = field(view.config.colorFieldID), case .choice(let c) = value(record, f) else { return nil }
-        return c.color
     }
 }

@@ -5,10 +5,14 @@ public enum ChangeOrigin: Sendable, Equatable {
     case local
     /// A change merged in from another device's log.
     case remote
+    /// A change merged in from an AI assistant's log (the MCP server, on this Mac or another). Nobody
+    /// is at a keyboard there, so the base's automation host runs record triggers for these.
+    case agent
     /// A change made by an automation step; `depth` guards against runaway chains.
     case automation(depth: Int)
 
-    public var isRemote: Bool { self == .remote }
+    /// Merged from another log rather than made here.
+    public var isRemote: Bool { self == .remote || self == .agent }
 
     public var automationDepth: Int {
         if case .automation(let depth) = self { return depth }
@@ -30,6 +34,8 @@ public struct ChangeSet: Sendable {
     public var schemaChanged = false
     public var automationsChanged = false
     public var commentsChanged = false
+    /// Comments written for the first time (not ones restored by undo).
+    public var createdComments: [String] = []
     public var baseInfoChanged = false
     public var affectedTables: Set<String> = []
 

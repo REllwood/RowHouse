@@ -15,6 +15,14 @@ public final class BaseDocument {
     public private(set) var schemaRevision = 0
     /// Bumped whenever records or comments change.
     public private(set) var dataRevision = 0
+    /// The collaborator who is "you" on this Mac; filters on "@me" match them.
+    @ObservationIgnored public var currentPersonID: String? {
+        didSet {
+            guard currentPersonID != oldValue else { return }
+            compute.invalidate(schema: false)
+            dataRevision &+= 1
+        }
+    }
     public private(set) var automationRevision = 0
 
     @ObservationIgnored public let clock: HybridClock
@@ -173,6 +181,10 @@ public final class BaseDocument {
         return automationsByID[id]
     }
 
+    public func comment(_ id: String) -> CommentModel? {
+        commentsByID[id]
+    }
+
     public func comments(for recordID: String) -> [CommentModel] {
         _ = dataRevision
         return commentsByID.values.filter { $0.recordID == recordID }.sorted { $0.createdTime < $1.createdTime }
@@ -183,9 +195,17 @@ public final class BaseDocument {
         return commentsByID.values.reduce(0) { $0 + ($1.recordID == recordID ? 1 : 0) }
     }
 
+    /// Macs that have opened this base. AI assistants are listed separately in `agents`, so they're
+    /// never chosen to run scheduled automations.
     public var devices: [DeviceInfo] {
         _ = schemaRevision
-        return devicesByID.values.sorted { $0.name < $1.name }
+        return devicesByID.values.filter { !$0.isAgent }.sorted { $0.name < $1.name }
+    }
+
+    /// AI assistants that have edited this base through the MCP server.
+    public var agents: [DeviceInfo] {
+        _ = schemaRevision
+        return devicesByID.values.filter(\.isAgent).sorted { $0.name < $1.name }
     }
 
     public func deviceName(for id: String) -> String {
@@ -310,8 +330,24 @@ public final class BaseDocument {
     public func mergeRemote(_ ops: [ChangeOperation]) {
         guard !ops.isEmpty else { return }
         if let maxTS = ops.map(\.ts).max() { clock.observe(maxTS) }
-        let changes = apply(ops, origin: .remote)
-        notify(changes)
+        // Per-property last-writer-wins makes the order of different devices' operations irrelevant,
+        // so assistants' edits can be applied (and reported) separately from other Macs'.
+        var agentNodes: [String: Bool] = [:]
+        let byAgent = Dictionary(grouping: ops) { op in
+            if let known = agentNodes[op.ts.node] { return known }
+            let isAgent = isAgentDevice(op.ts.node)
+            agentNodes[op.ts.node] = isAgent
+            return isAgent
+        }
+        if let others = byAgent[false] { notify(apply(others, origin: .remote)) }
+        if let agents = byAgent[true] { notify(apply(agents, origin: .agent)) }
+    }
+
+    /// Whether a device id belongs to an AI assistant: registered as one, or named the way the MCP
+    /// server names itself ("<mac>-agent<N>"), which covers edits that arrive before its registration.
+    public func isAgentDevice(_ id: String) -> Bool {
+        if let device = devicesByID[id] { return device.isAgent }
+        return id.range(of: #"-agent(\d+|-[A-Za-z0-9]+)$"#, options: .regularExpression) != nil
     }
 
     /// Merges a snapshot written by another device.
@@ -454,15 +490,17 @@ public final class BaseDocument {
             automationsByID[id] = entity.flatMap { Self.makeAutomation(id, $0) }
             changes.automationsChanged = true
         case .comment:
+            let existed = commentsByID[id] != nil
             commentsByID[id] = entity.flatMap { makeComment(id, $0) }
             changes.commentsChanged = true
+            if !existed, commentsByID[id] != nil, changedKeys.contains("created") { changes.createdComments.append(id) }
         case .device:
             devicesByID[id] = entity.flatMap { Self.makeDevice(id, $0) }
             changes.baseInfoChanged = true
         }
     }
 
-    private static func isDeleted(_ e: EntityState) -> Bool {
+    static func isDeleted(_ e: EntityState) -> Bool {
         e["_deleted"]?.boolValue == true
     }
 
@@ -474,23 +512,25 @@ public final class BaseDocument {
         if let c = e["color"]?.stringValue, let color = ChoiceColor(rawValue: c) { info.color = color }
         info.description = e["description"]?.stringValue ?? ""
         info.automationHostDeviceID = e["automationHost"]?.stringValue
+        info.people = e["people"]?.decode([Person].self) ?? []
         return info
     }
 
-    private static func makeTable(_ id: String, _ e: EntityState) -> TableModel? {
-        guard !isDeleted(e), let name = e["name"]?.stringValue else { return nil }
+    static func makeTable(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> TableModel? {
+        guard includeDeleted || !isDeleted(e), let name = e["name"]?.stringValue else { return nil }
         return TableModel(
             id: id,
             name: name,
             order: e["order"]?.numberValue ?? 0,
             primaryFieldID: e["primaryField"]?.stringValue,
             description: e["description"]?.stringValue ?? "",
-            icon: e["icon"]?.stringValue
+            icon: e["icon"]?.stringValue,
+            recordTemplates: e["recordTemplates"]?.decode([RecordTemplate].self) ?? []
         )
     }
 
-    private static func makeField(_ id: String, _ e: EntityState) -> FieldModel? {
-        guard !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
+    static func makeField(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> FieldModel? {
+        guard includeDeleted || !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
               let typeName = e["type"]?.stringValue, let type = FieldType(rawValue: typeName)
         else { return nil }
         return FieldModel(
@@ -504,8 +544,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeView(_ id: String, _ e: EntityState) -> ViewModel? {
-        guard !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
+    static func makeView(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> ViewModel? {
+        guard includeDeleted || !isDeleted(e), let table = e["table"]?.stringValue, let name = e["name"]?.stringValue,
               let typeName = e["type"]?.stringValue, let type = ViewType(rawValue: typeName)
         else { return nil }
         return ViewModel(
@@ -518,8 +558,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeRecord(_ id: String, _ e: EntityState) -> RecordModel? {
-        guard !isDeleted(e), let table = e["_table"]?.stringValue else { return nil }
+    static func makeRecord(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> RecordModel? {
+        guard includeDeleted || !isDeleted(e), let table = e["_table"]?.stringValue else { return nil }
         var cells: [String: JSONValue] = [:]
         var stamps: [String: HLC] = [:]
         cells.reserveCapacity(e.props.count)
@@ -540,8 +580,8 @@ public final class BaseDocument {
         )
     }
 
-    private static func makeAutomation(_ id: String, _ e: EntityState) -> AutomationModel? {
-        guard !isDeleted(e), let name = e["name"]?.stringValue,
+    static func makeAutomation(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> AutomationModel? {
+        guard includeDeleted || !isDeleted(e), let name = e["name"]?.stringValue,
               let trigger = e["trigger"]?.decode(AutomationTrigger.self)
         else { return nil }
         return AutomationModel(
@@ -555,8 +595,8 @@ public final class BaseDocument {
         )
     }
 
-    private func makeComment(_ id: String, _ e: EntityState) -> CommentModel? {
-        guard !Self.isDeleted(e), let record = e["record"]?.stringValue, let text = e["text"]?.stringValue else { return nil }
+    func makeComment(_ id: String, _ e: EntityState, includeDeleted: Bool = false) -> CommentModel? {
+        guard includeDeleted || !Self.isDeleted(e), let record = e["record"]?.stringValue, let text = e["text"]?.stringValue else { return nil }
         let author = e["author"]?.stringValue ?? ""
         return CommentModel(
             id: id,
@@ -564,13 +604,14 @@ public final class BaseDocument {
             text: text,
             authorDeviceID: author,
             authorName: e["authorName"]?.stringValue ?? "Unknown",
-            createdTime: Date(timeIntervalSince1970: (e["created"]?.numberValue ?? 0) / 1000)
+            createdTime: Date(timeIntervalSince1970: (e["created"]?.numberValue ?? 0) / 1000),
+            mentions: e["mentions"]?.stringArray ?? []
         )
     }
 
     private static func makeDevice(_ id: String, _ e: EntityState) -> DeviceInfo? {
         guard let name = e["name"]?.stringValue else { return nil }
-        return DeviceInfo(id: id, name: name, lastSeen: Date(timeIntervalSince1970: (e["lastSeen"]?.numberValue ?? 0) / 1000))
+        return DeviceInfo(id: id, name: name, lastSeen: Date(timeIntervalSince1970: (e["lastSeen"]?.numberValue ?? 0) / 1000), kind: e["kind"]?.stringValue)
     }
 
     // MARK: - Internal helpers for extensions

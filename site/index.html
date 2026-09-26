@@ -97,8 +97,8 @@
     .card h3 { margin: 12px 0 6px; font-size: 17px; }
     .card p { margin: 0; color: var(--muted); font-size: 15px; }
     .dot { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-size: 20px; color: #fff; }
-    .two { display: grid; gap: 40px; grid-template-columns: 1fr 1fr; align-items: center; }
-    @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+    .two { display: grid; gap: 40px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+    @media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
     .media { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); }
     ul.checks { list-style: none; padding: 0; margin: 0; }
     ul.checks li { padding: 8px 0 8px 30px; position: relative; color: var(--muted); }
@@ -122,6 +122,7 @@
       <div class="links">
         <a class="hide-sm" href="#features">Features</a>
         <a class="hide-sm" href="#sync">How sync works</a>
+        <a class="hide-sm" href="#assistants">AI assistants</a>
         <a class="hide-sm" href="#automations">Automations</a>
         <a href="https://github.com/REllwood/RowHouse">GitHub</a>
         <a class="btn btn-primary btn-small" href="https://github.com/REllwood/RowHouse/releases/latest">Download</a>
@@ -133,7 +134,7 @@
     <div class="wrap">
       <img class="hero-icon" src="assets/icon.png" alt="RowHouse app icon">
       <h1>Your databases,<br><span class="grad">in your iCloud Drive.</span></h1>
-      <p class="lede">RowHouse is a native Mac app for building databases with grids, kanban boards, calendars, formulas and automations. It works like Airtable, but there's no server and no account, and your data never leaves your Macs.</p>
+      <p class="lede">RowHouse is a native Mac app for building databases with grids, kanban boards, calendars, Gantt charts, dashboards, formulas and automations. It works like Airtable, but there's no server and no account, and your data stays on your Macs. Claude and Codex can work with it too.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/REllwood/RowHouse/releases/latest">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5 3.5 7l1.06-1.06L7.25 8.63V1h1.5v7.63l2.69-2.69L12.5 7 8 11.5ZM2 13.5h12V15H2v-1.5Z"/></svg>
@@ -152,15 +153,22 @@
   <section id="features">
     <div class="wrap">
       <h2>Everything you use in Airtable, on your own Mac</h2>
-      <p class="sub">Tables, linked records and 24 field types, with views that each keep their own filters, sorts and groups.</p>
+      <p class="sub">Tables, linked records and 29 field types, with ten kinds of view that each keep their own filters, sorts, groups and colours.</p>
       <div class="grid">
-        <div class="card"><div class="dot" style="background:#2d7ff9">▦</div><h3>Seven view types</h3><p>Grid, Kanban, Calendar, Gallery, Timeline, Form and Chart. Drag cards between stacks and records between days.</p></div>
+        <div class="card"><div class="dot" style="background:#2d7ff9">▦</div><h3>Ten view types</h3><p>Grid, List, Kanban, Calendar, Gallery, Timeline, Gantt, Form, Chart and Dashboard. Drag cards between stacks, records between days and bars across the calendar.</p></div>
         <div class="card"><div class="dot" style="background:#20c9a6">ƒ</div><h3>84 formula functions</h3><p>Airtable-compatible formulas, plus lookups, rollups and counts through linked records, with live validation.</p></div>
-        <div class="card"><div class="dot" style="background:#f7a400">⚡</div><h3>Automations</h3><p>Record, form, button and scheduled triggers. Create and update records, send notifications, call webhooks, run scripts and Shortcuts.</p></div>
+        <div class="card"><div class="dot" style="background:#f7a400">⚡</div><h3>Automations</h3><p>Record, view, form, button, webhook and scheduled triggers. Update records, send email, call APIs, run scripts and Shortcuts, generate text with AI, and repeat for each item.</p></div>
         <div class="card"><div class="dot" style="background:#8b46ff">⌘</div><h3>A real Mac app</h3><p>A fast, keyboard-driven grid with range selection, copy and paste to and from Numbers or Excel, undo, dark mode, and a menu bar item.</p></div>
-        <div class="card"><div class="dot" style="background:#f82b60">⇄</div><h3>Import from Airtable</h3><p>Bring a whole base across, including linked records, select options, formulas and attachments. CSV import detects field types.</p></div>
+        <div class="card"><div class="dot" style="background:#f82b60">⇄</div><h3>Import from Airtable</h3><p>Bring a whole base across, including linked records, select options, formulas and attachments. CSV and Excel imports detect field types.</p></div>
         <div class="card"><div class="dot" style="background:#18bfff">☁︎</div><h3>Sync without a server</h3><p>Bases are plain files in iCloud Drive. Edits from all your Macs merge field by field, even offline.</p></div>
+        <div class="card"><div class="dot" style="background:#d4572a">✳︎</div><h3>AI fields</h3><p>Write a prompt that refers to other fields and Claude fills in every record, with your own Anthropic API key.</p></div>
+        <div class="card"><div class="dot" style="background:#3aa757">@</div><h3>Work together</h3><p>Collaborator fields, comments with @mentions, record history, a trash, record templates, find duplicates and print to PDF.</p></div>
+        <div class="card"><div class="dot" style="background:#6e56cf">◎</div><h3>Built for AI assistants</h3><p>A built-in MCP server lets Claude Code, Codex and Claude Desktop search, create and update your records.</p></div>
       </div>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/gantt-dark.png">
+        <img class="shot" src="assets/gantt-light.png" alt="A Gantt view with dependencies" loading="lazy">
+      </picture>
       <img class="shot" src="assets/tour.gif" alt="A tour of RowHouse's views" loading="lazy">
     </div>
   </section>
@@ -173,11 +181,29 @@
         <ul class="checks">
           <li><strong>Edit anywhere, even offline.</strong> Changes merge when your Macs reconnect.</li>
           <li><strong>Different fields both survive.</strong> Two people editing one record keep both edits.</li>
-          <li><strong>Automations run once.</strong> They fire only on the Mac where the change happened.</li>
+          <li><strong>Automations run once.</strong> They fire only on the Mac where the change happened, or on one chosen Mac for scheduled runs and AI assistants' edits.</li>
           <li><strong>Plain, open files.</strong> JSON you can back up, inspect or version.</li>
         </ul>
       </div>
       <div class="media"><img src="assets/sync.gif" alt="Edits from another Mac appearing live" loading="lazy"></div>
+    </div>
+  </section>
+
+  <section id="assistants">
+    <div class="wrap two">
+      <div>
+        <h2>Ask Claude or Codex to fill it in</h2>
+        <p class="sub">RowHouse comes with an MCP server. Connect it once and your AI assistant can read your bases, add and update records, and build tables and fields. Its edits sync like another Mac's, are labelled with its name, and can start your automations.</p>
+<pre><code>claude mcp add --scope user rowhouse -- \
+  /Applications/RowHouse.app/Contents/MacOS/rowhouse-mcp</code></pre>
+        <p class="sub" style="margin-top:14px">Setup for Codex and Claude Desktop is in <strong>Settings › AI Assistants</strong>.</p>
+      </div>
+      <div class="media">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-dark.png">
+          <img src="assets/dashboard-light.png" alt="A dashboard view" loading="lazy">
+        </picture>
+      </div>
     </div>
   </section>
 

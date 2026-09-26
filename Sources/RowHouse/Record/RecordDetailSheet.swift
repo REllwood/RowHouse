@@ -25,8 +25,8 @@ struct RecordDetailSheet: View {
                             .id(record.id)
                     }
                     Divider()
-                    CommentsPanel(document: document, record: record)
-                        .frame(width: 290)
+                    RecordSidePanel(session: session, record: record)
+                        .frame(width: 300)
                 }
             } else {
                 ContentUnavailableView("Record deleted", systemImage: "trash", description: Text("This record no longer exists."))
@@ -82,6 +82,9 @@ struct RecordDetailSheet: View {
             Menu {
                 Button("Duplicate Record") {
                     if let id = document.duplicateRecords([record.id]).first { recordID = id }
+                }
+                Button("Print Record…") {
+                    Printing.print(html: document.exportHTML(recordID: record.id), title: document.primaryTitle(record))
                 }
                 Button("Copy Record Link") {
                     NSPasteboard.general.clearContents()
@@ -150,6 +153,121 @@ struct RecordFieldsForm: View {
     }
 }
 
+private struct RecordSidePanel: View {
+    let session: BaseSession
+    let record: RecordModel
+    @State private var tab = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) {
+                Text("Comments").tag(0)
+                Text("History").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(12)
+            Divider()
+            if tab == 0 {
+                CommentsPanel(document: session.document, record: record)
+            } else {
+                HistoryPanel(session: session, record: record)
+                    .id(record.id)
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// A record's revision history, read from every Mac's change logs (the last 14 days).
+private struct HistoryPanel: View {
+    let session: BaseSession
+    let record: RecordModel
+    @State private var entries: [RecordHistoryEntry]?
+
+    var body: some View {
+        Group {
+            if let entries {
+                if entries.isEmpty {
+                    ContentUnavailableView("No history yet", systemImage: "clock.arrow.circlepath", description: Text("Changes from the last 14 days appear here."))
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(entries) { entry in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: symbol(entry.kind)).foregroundStyle(color(entry.kind)).font(.caption)
+                                        Text(entry.author).font(.caption.weight(.semibold))
+                                        Text(entry.date.formatted(.relative(presentation: .named))).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if entry.kind != .updated {
+                                        Text(title(entry.kind)).font(.callout).foregroundStyle(.secondary)
+                                    }
+                                    ForEach(entry.changes, id: \.self) { change in
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(change.fieldName).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                                if !change.old.isEmpty {
+                                                    Text(change.old).strikethrough().foregroundStyle(.secondary).lineLimit(3)
+                                                    Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.tertiary)
+                                                }
+                                                Text(change.new.isEmpty ? "(cleared)" : change.new).lineLimit(3)
+                                            }
+                                            .font(.callout)
+                                        }
+                                    }
+                                }
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: record.lastModifiedStamp) { await load() }
+    }
+
+    private func load() async {
+        let storage = session.storage
+        let id = record.id
+        storage.flush()
+        let ops = await Task.detached(priority: .userInitiated) { storage.operations(forEntity: id) }.value
+        entries = session.document.history(of: id, operations: ops)
+    }
+
+    private func symbol(_ kind: RecordHistoryEntry.Kind) -> String {
+        switch kind {
+        case .created: "plus.circle.fill"
+        case .updated: "pencil.circle.fill"
+        case .deleted: "trash.circle.fill"
+        case .restored: "arrow.uturn.backward.circle.fill"
+        }
+    }
+
+    private func color(_ kind: RecordHistoryEntry.Kind) -> Color {
+        switch kind {
+        case .created: .green
+        case .updated: .accentColor
+        case .deleted: .red
+        case .restored: .orange
+        }
+    }
+
+    private func title(_ kind: RecordHistoryEntry.Kind) -> String {
+        switch kind {
+        case .created: "Created this record"
+        case .updated: "Edited"
+        case .deleted: "Deleted this record"
+        case .restored: "Restored this record"
+        }
+    }
+}
+
 private struct CommentsPanel: View {
     let document: BaseDocument
     let record: RecordModel
@@ -158,10 +276,6 @@ private struct CommentsPanel: View {
     var body: some View {
         let comments = document.comments(for: record.id)
         VStack(alignment: .leading, spacing: 0) {
-            Text("Comments")
-                .font(.headline)
-                .padding(16)
-            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if comments.isEmpty {
@@ -186,7 +300,7 @@ private struct CommentsPanel: View {
                                     .buttonStyle(.borderless)
                                 }
                             }
-                            Text(comment.text)
+                            Text(highlighted(comment.text))
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -197,8 +311,31 @@ private struct CommentsPanel: View {
                 .padding(16)
             }
             Divider()
+            if let query = mentionQuery {
+                let matches = document.people.filter { query.isEmpty || $0.displayName.lowercased().hasPrefix(query.lowercased()) || $0.email.lowercased().hasPrefix(query.lowercased()) }.prefix(5)
+                if !matches.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(matches)) { person in
+                            Button {
+                                insertMention(person, replacing: query)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    PersonAvatar(person: person, size: 18)
+                                    Text(person.displayName)
+                                    if !person.email.isEmpty { Text(person.email).foregroundStyle(.secondary) }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+            }
             HStack(alignment: .bottom) {
-                TextField("Leave a comment", text: $draft, axis: .vertical)
+                TextField(document.people.isEmpty ? "Leave a comment" : "Leave a comment, @ to mention", text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...5)
                     .onSubmit(send)
@@ -216,5 +353,31 @@ private struct CommentsPanel: View {
     private func send() {
         document.addComment(to: record.id, text: draft)
         draft = ""
+    }
+
+    /// The text typed after an "@" at the end of the draft, while a mention is being written.
+    private var mentionQuery: String? {
+        guard !document.people.isEmpty, let at = draft.lastIndex(of: "@") else { return nil }
+        if at > draft.startIndex, !draft[draft.index(before: at)].isWhitespace { return nil }
+        let query = draft[draft.index(after: at)...]
+        guard query.count <= 40, !query.contains(where: \.isNewline) else { return nil }
+        if document.people.contains(where: { query.lowercased().hasPrefix($0.displayName.lowercased() + " ") }) { return nil }
+        return String(query)
+    }
+
+    private func insertMention(_ person: Person, replacing query: String) {
+        draft.removeLast(query.count + 1)
+        draft += "@" + person.displayName + " "
+    }
+
+    private func highlighted(_ text: String) -> AttributedString {
+        var result = AttributedString(text)
+        for mention in document.mentionRanges(in: text) {
+            guard let lower = AttributedString.Index(mention.range.lowerBound, within: result),
+                  let upper = AttributedString.Index(mention.range.upperBound, within: result) else { continue }
+            result[lower..<upper].foregroundColor = mention.person.color.swiftUI
+            result[lower..<upper].font = .body.weight(.semibold)
+        }
+        return result
     }
 }

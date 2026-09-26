@@ -4,9 +4,10 @@ import SwiftUI
 
 /// Drives the spreadsheet grid: data source, delegate, cell cursor, editing, clipboard and menus.
 @MainActor
-final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSDraggingSource {
     static let rowColumnID = "__row"
     static let addColumnID = "__add"
+    static let rowDragType = NSPasteboard.PasteboardType("com.rellwood.rowhouse.record-rows")
 
     let tableView = GridTableView()
     let scrollView = NSScrollView()
@@ -24,6 +25,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private var columnSignature = ""
     private var rebuildingColumns = false
     private var widthSaveTask: Task<Void, Never>?
+    /// AI fields currently being filled from the column menu.
+    private var aiGenerations: Set<String> = []
 
     var callbacks = Callbacks()
     struct Callbacks {
@@ -80,6 +83,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         header.controller = self
         tableView.headerView = header
         tableView.setAccessibilityLabel("Records")
+        tableView.registerForDraggedTypes([Self.rowDragType])
+        tableView.draggingDestinationFeedbackStyle = .regular
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -139,6 +144,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             rebuildColumns()
             columnSignature = signature
         }
+        tableView.allowsColumnReordering = !view.config.isLocked
         let revisionChanged = revision != lastRevision
         lastRevision = revision
         if editor != nil {
@@ -155,6 +161,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func columnsSignature(fields: [FieldModel], view: ViewModel) -> String {
         fields.map { f in "\(f.id):\(f.name):\(f.type.rawValue):\(Int(view.config.columnWidths?[f.id] ?? 0))" }.joined(separator: "|")
+            + (view.config.isLocked ? "|locked" : "")
     }
 
     private func defaultWidth(_ field: FieldModel, isPrimary: Bool) -> CGFloat {
@@ -189,7 +196,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             column.width = CGFloat(view.config.columnWidths?[field.id] ?? Double(defaultWidth(field, isPrimary: field.id == primaryID)))
             column.minWidth = 60
             column.maxWidth = 1200
-            column.resizingMask = .userResizingMask
+            column.resizingMask = view.config.isLocked ? [] : .userResizingMask
             let header = FieldHeaderCell(textCell: field.name)
             header.field = field
             column.headerCell = header
@@ -235,6 +242,13 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let rowView = (tableView.makeView(withIdentifier: NSUserInterfaceItemIdentifier("row"), owner: nil) as? GridRowView) ?? GridRowView()
+        rowView.identifier = NSUserInterfaceItemIdentifier("row")
+        rowView.tint = row < rows.count ? rows[row].recordID.flatMap { document.record($0) }.flatMap { document.recordColor($0, view: view) }.map(GridRowView.tint) : nil
+        return rowView
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         if row >= rows.count {
             return addRowView(for: tableColumn)
@@ -259,6 +273,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 v.hovering = row == hoverRow
                 v.rowSelected = selectedRows.contains(row)
                 v.commentCount = document.commentCount(for: recordID)
+                v.accent = document.recordColor(record, view: view).map(Theme.solid)
+                v.draggable = canReorder
                 return v
             }
             if id == Self.addColumnID { return nil }
@@ -377,7 +393,9 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         menu.addItem(ActionMenuItem("Insert right", image: "arrow.right.to.line") { [weak self] in
             self?.showFieldConfig(fieldID: nil, insertAfter: field.id, relativeTo: rect, of: header)
         })
+        let locked = view.config.isLocked
         menu.addItem(.separator())
+        if !locked {
         menu.addItem(ActionMenuItem("Sort ascending", image: "arrow.up") { [weak self] in
             guard let self else { return }
             self.document.updateViewConfig(self.view.id, actionName: "Sort") { $0.sorts = [SortSpec(fieldID: field.id, ascending: true)] }
@@ -394,11 +412,22 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             guard let self else { return }
             self.document.updateViewConfig(self.view.id, actionName: "Filter") { config in
                 var filter = config.filter ?? FilterGroup()
-                let op = FilterOperator.available(for: field.type).first ?? .contains
+                let op = FilterOperator.available(for: field).first ?? .contains
                 filter.conditions.append(FilterCondition(fieldID: field.id, op: op, value: field.type == .checkbox ? .bool(true) : nil))
                 config.filter = filter
             }
         })
+        }
+        if field.type == .aiText {
+            menu.addItem(.separator())
+            let running = aiGenerations.contains(field.id)
+            let generate = ActionMenuItem(running ? "Generating…" : "Generate for all empty cells in this view", image: "sparkles") { [weak self] in
+                self?.confirmAIGeneration(field)
+            }
+            generate.isEnabled = !running
+            menu.autoenablesItems = false
+            menu.addItem(generate)
+        }
         menu.addItem(.separator())
         if !isPrimary {
             if field.type.canBePrimary {
@@ -407,14 +436,14 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                     self.document.setPrimaryField(field.id, in: self.view.tableID)
                 })
             }
-            menu.addItem(ActionMenuItem("Hide field", image: "eye.slash") { [weak self] in
+            if !locked { menu.addItem(ActionMenuItem("Hide field", image: "eye.slash") { [weak self] in
                 guard let self else { return }
                 self.document.updateViewConfig(self.view.id, actionName: "Hide Field") { config in
                     var set = config.hidden
                     set.insert(field.id)
                     config.hiddenFieldIDs = Array(set)
                 }
-            })
+            }) }
             menu.addItem(.separator())
             let delete = ActionMenuItem("Delete field", image: "trash") { [weak self] in
                 self?.confirmDeleteField(field)
@@ -443,13 +472,61 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
+    private func confirmAIGeneration(_ field: FieldModel) {
+        let targets = recordIDs.filter { id in document.record(id).map { document.value($0, field).isEmpty } ?? false }
+        guard let window = tableView.window else { return }
+        let alert = NSAlert()
+        guard !targets.isEmpty else {
+            alert.messageText = "Every record in this view already has a value for “\(field.name)”."
+            alert.beginSheetModal(for: window)
+            return
+        }
+        let service: AIService
+        do {
+            service = try AIConfiguration.makeService()
+        } catch {
+            alert.messageText = "Claude AI isn't set up yet"
+            alert.informativeText = error.localizedDescription
+            alert.beginSheetModal(for: window)
+            return
+        }
+        alert.messageText = targets.count == 1
+            ? "Generate “\(field.name)” for 1 empty record?"
+            : "Generate “\(field.name)” for \(targets.count) empty records?"
+        alert.informativeText = "Each record's prompt, including the values of the fields it mentions, is sent to Anthropic with your API key. Values appear as they arrive and can be undone one by one."
+        alert.addButton(withTitle: "Generate")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.generateAIValues(field, recordIDs: targets, service: service)
+        }
+    }
+
+    private func generateAIValues(_ field: FieldModel, recordIDs targets: [String], service: AIService) {
+        aiGenerations.insert(field.id)
+        let document = self.document
+        Task { @MainActor [weak self] in
+            let result = await document.generateAIValues(fieldID: field.id, recordIDs: targets, using: service)
+            self?.aiGenerations.remove(field.id)
+            guard let self, !result.failures.isEmpty, let window = self.tableView.window else { return }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = result.failures.count == 1
+                ? "1 value of “\(field.name)” couldn't be generated"
+                : "\(result.failures.count) values of “\(field.name)” couldn't be generated"
+            let generated = result.generated == 1 ? "1 value was generated." : "\(result.generated) values were generated."
+            alert.informativeText = generated + " " + (result.failures.first?.message ?? "")
+            alert.beginSheetModal(for: window, completionHandler: nil)
+        }
+    }
+
     func showFieldConfig(fieldID: String?, insertAfter: String? = nil, relativeTo rect: NSRect, of view: NSView) {
         popover?.close()
         let pop = NSPopover()
         pop.behavior = .transient
         let tableID = self.view.tableID
         let after = insertAfter ?? (fieldID == nil ? fields.last?.id : nil)
-        pop.contentViewController = NSHostingController(rootView: FieldConfigView(document: document, tableID: tableID, fieldID: fieldID, insertAfter: after) { [weak pop] in
+        pop.contentViewController = NSHostingController(rootView: FieldConfigView(document: document, tableID: tableID, fieldID: fieldID, insertAfter: after, session: session) { [weak pop] in
             pop?.close()
         })
         pop.show(relativeTo: rect, of: view, preferredEdge: .maxY)
@@ -475,7 +552,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func summaryMenu(forFieldID fieldID: String) -> NSMenu? {
-        guard let field = document.field(fieldID) else { return nil }
+        guard let field = document.field(fieldID), !view.config.isLocked else { return nil }
         let menu = NSMenu()
         let current = view.config.summaries?[fieldID] ?? SummaryFunction.none
         for fn in SummaryFunction.available(for: field.type) {
@@ -653,12 +730,15 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             } else if event.modifierFlags.contains(.shift), let last = selectedRows.last ?? cursor?.row {
                 selectedRows.insert(integersIn: min(last, row)...max(last, row))
                 selectedRows = selectedRows.filteredIndexSet { rows.indices.contains($0) && rows[$0].recordID != nil }
-            } else {
+            } else if !selectedRows.contains(row) || !canReorder {
                 selectedRows = [row]
             }
             cursor = nil
             anchor = nil
             refreshSelection()
+            if canReorder && event.modifierFlags.intersection([.command, .shift]).isEmpty {
+                trackRowDrag(mouseDown: event, row: row)
+            }
             return true
         }
         guard let fi = fieldIndex(forTableColumn: col) else { return true }
@@ -718,6 +798,92 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 refreshSelection()
             }
         }
+    }
+
+    // MARK: - Reordering rows
+
+    /// Rows can be dragged by their number to reorder records when the view has no sorts or groups.
+    var canReorder: Bool {
+        let sorted = (view.config.sorts ?? []).contains { document.field($0.fieldID) != nil }
+        let grouped = (view.config.groups ?? []).contains { document.field($0.fieldID) != nil }
+        return view.type == .grid && !sorted && !grouped
+    }
+
+    /// Waits to see whether a click on a row number becomes a drag; a plain click keeps just that row selected.
+    private func trackRowDrag(mouseDown: NSEvent, row: Int) {
+        guard let window = tableView.window else { return }
+        let start = mouseDown.locationInWindow
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp {
+                if selectedRows.count > 1 {
+                    selectedRows = [row]
+                    refreshSelection()
+                }
+                return
+            }
+            let p = next.locationInWindow
+            if hypot(p.x - start.x, p.y - start.y) >= 4 {
+                beginRowDrag(mouseDown: mouseDown, row: row)
+                return
+            }
+        }
+    }
+
+    private func beginRowDrag(mouseDown: NSEvent, row: Int) {
+        let dragged = (selectedRows.contains(row) ? Array(selectedRows) : [row]).sorted()
+        let ids = dragged.compactMap { rows.indices.contains($0) ? rows[$0].recordID : nil }
+        guard !ids.isEmpty else { return }
+        let item = NSPasteboardItem()
+        item.setString(ids.joined(separator: "\n"), forType: Self.rowDragType)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        var frame = tableView.rect(ofRow: row).intersection(tableView.visibleRect)
+        frame.size.width = min(frame.width, 640)
+        dragItem.setDraggingFrame(frame, contents: dragImage(frame: frame, count: ids.count))
+        tableView.beginDraggingSession(with: [dragItem], event: mouseDown, source: self)
+    }
+
+    private func dragImage(frame: NSRect, count: Int) -> NSImage {
+        let snapshot = tableView.bitmapImageRepForCachingDisplay(in: frame)
+        if let snapshot { tableView.cacheDisplay(in: frame, to: snapshot) }
+        return NSImage(size: frame.size, flipped: false) { rect in
+            Theme.gridBackground.setFill()
+            rect.fill()
+            snapshot?.draw(in: rect)
+            NSColor.controlAccentColor.withAlphaComponent(0.6).setStroke()
+            let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
+            border.lineWidth = 1
+            border.stroke()
+            if count > 1 {
+                let text = NSAttributedString(string: "\(count)", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.white])
+                let size = text.size()
+                let badge = NSRect(x: rect.maxX - size.width - 22, y: rect.midY - 9, width: size.width + 14, height: 18)
+                NSColor.controlAccentColor.setFill()
+                NSBezierPath(roundedRect: badge, xRadius: 9, yRadius: 9).fill()
+                text.draw(at: NSPoint(x: badge.minX + 7, y: badge.midY - size.height / 2))
+            }
+            return true
+        }
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
+    }
+
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard canReorder, info.draggingSource as? GridController === self, info.draggingPasteboard.string(forType: Self.rowDragType) != nil else { return [] }
+        tableView.setDropRow(max(0, min(row, rows.count)), dropOperation: .above)
+        return .move
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard canReorder, info.draggingSource as? GridController === self,
+              let text = info.draggingPasteboard.string(forType: Self.rowDragType) else { return false }
+        let ids = text.split(separator: "\n").map(String.init)
+        let visible = rows.compactMap(\.recordID)
+        let anchor = ManualOrder.anchor(visible: visible, moving: Set(ids), dropIndex: row)
+        selectedRows = IndexSet()
+        document.moveRecords(ids, before: anchor)
+        return true
     }
 
     private func openLink(recordID: String, field: FieldModel) {
@@ -842,6 +1008,32 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if !updates.isEmpty { document.updateRecords(updates, actionName: "Clear Cells") }
     }
 
+    /// Copies the first selected row's values down through the selection (⌘D). With a single cell
+    /// selected, copies the value from the record above.
+    func fillDown() {
+        commitEditing()
+        guard let r = range else { return }
+        let recordRows = r.rows.filter { $0 < rows.count && rows[$0].recordID != nil }
+        var source: Int?
+        var targets: [Int]
+        if recordRows.count > 1 {
+            source = recordRows.first
+            targets = Array(recordRows.dropFirst())
+        } else {
+            source = recordRows.first.flatMap { nextRecordRow(from: $0, step: -1) }
+            targets = recordRows
+        }
+        guard let source, let sourceID = rows[source].recordID, let record = document.record(sourceID) else { return }
+        var updates: [String: [String: JSONValue]] = [:]
+        for row in targets {
+            guard let rid = rows[row].recordID else { continue }
+            for col in r.cols where col < fields.count && fields[col].isEditable {
+                updates[rid, default: [:]][fields[col].id] = document.editableValue(record, fields[col])
+            }
+        }
+        if !updates.isEmpty { document.updateRecords(updates, actionName: "Fill Down") }
+    }
+
     // MARK: - Records
 
     func addRecord(after afterID: String? = nil) {
@@ -852,6 +1044,30 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             self.setCursor(GridPosition(row: row, column: 0))
             self.beginEditing(GridPosition(row: row, column: 0))
         }
+    }
+
+    func addRecord(from template: RecordTemplate, after afterID: String? = nil) {
+        commitEditing()
+        let id = document.createRecord(from: template, in: view.tableID, after: afterID)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let row = self.rows.firstIndex(where: { $0.recordID == id }) else { return }
+            self.setCursor(GridPosition(row: row, column: 0))
+        }
+    }
+
+    private func saveTemplate(from recordID: String) {
+        let alert = NSAlert()
+        alert.messageText = "Save as Record Template"
+        alert.informativeText = "New records created from this template start with this record's values."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "Template name"
+        field.stringValue = document.primaryTitle(recordID: recordID)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        document.saveTemplate(named: field.stringValue.trimmingCharacters(in: .whitespaces), from: recordID)
     }
 
     /// New records pick up simple "is" filter values so they stay visible in the filtered view.
@@ -869,6 +1085,11 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 values[f.id] = v
             case (let t, .is) where t.isTextual:
                 if let s = v.stringValue { values[f.id] = .string(s) }
+            case (.collaborator, .is), (.collaborator, .isAnyOf), (.collaborator, .hasAnyOf), (.collaborator, .hasAllOf), (.collaborator, .isExactly):
+                let ids = v.collaboratorIDs.filter { document.person($0) != nil }
+                if !ids.isEmpty {
+                    values[f.id] = f.options.allowMultipleCollaborators == true ? .array(ids.map(JSONValue.string)) : .string(ids[0])
+                }
             default:
                 break
             }
@@ -920,6 +1141,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             return
         case .singleLineText, .email, .url, .phoneNumber, .number, .currency, .percent, .duration:
             startInlineEditor(pos: pos, rect: rect, text: initialText ?? editText(record: record, field: field), replacing: initialText != nil)
+        case .barcode where initialText != nil:
+            startInlineEditor(pos: pos, rect: rect, text: initialText ?? "", replacing: true)
         case .date where initialText != nil:
             startInlineEditor(pos: pos, rect: rect, text: initialText ?? "", replacing: true)
         case .button:
@@ -1169,6 +1392,20 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         })
         menu.addItem(ActionMenuItem(targets.count > 1 ? "Duplicate \(targets.count) records" : "Duplicate record", image: "plus.square.on.square") { [weak self] in
             _ = self?.document.duplicateRecords(targets)
+        })
+        let templates = document.table(view.tableID)?.recordTemplates ?? []
+        if !templates.isEmpty {
+            let item = NSMenuItem(title: "New record from template", action: nil, keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
+            let sub = NSMenu()
+            for template in templates {
+                sub.addItem(ActionMenuItem(template.name, image: nil) { [weak self] in self?.addRecord(from: template, after: rid) })
+            }
+            item.submenu = sub
+            menu.addItem(item)
+        }
+        menu.addItem(ActionMenuItem("Save as template…", image: "doc.badge.gearshape") { [weak self] in
+            self?.saveTemplate(from: rid)
         })
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem("Copy", image: "doc.on.doc") { [weak self] in self?.copySelection() })

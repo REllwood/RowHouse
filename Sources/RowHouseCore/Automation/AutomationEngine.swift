@@ -6,29 +6,41 @@ public protocol AutomationServices: Sendable {
     func sendNotification(title: String, body: String) async throws
     func perform(_ request: URLRequest) async throws -> (status: Int, headers: [String: String], body: Data)
     func runShortcut(named name: String, input: String) async throws -> String
+    /// Sends an email; recipients are already validated addresses.
+    func sendEmail(to: [String], cc: [String], bcc: [String], subject: String, body: String) async throws
+    /// Generates text with Claude using the key saved in Settings.
+    func generateText(prompt: String, model: String?) async throws -> String
 }
 
 /// Runs a base's automations.
 ///
 /// To make sure an automation runs exactly once even with several Macs sharing a base:
-/// record triggers fire only on the Mac where the change was made (remote changes never fire), and
-/// scheduled triggers fire only on the base's automation host.
+/// record triggers fire only on the Mac where the change was made (other Macs' changes never fire;
+/// changes made by AI assistants through the MCP server fire on the automation host),
+/// scheduled triggers fire only on the base's automation host, and webhooks run on the Mac that
+/// received them (the server only listens on the loopback interface).
 @MainActor
 @Observable
 public final class AutomationEngine {
     public let session: BaseSession
     public var document: BaseDocument { session.document }
     public private(set) var activeRuns = 0
+    /// The latest request each webhook automation received, used for test runs and the editor's tokens.
+    public private(set) var lastWebhookRequests: [String: WebhookRequest] = [:]
 
     @ObservationIgnored private let services: AutomationServices
     @ObservationIgnored private var observer: UUID?
     @ObservationIgnored private var scheduleTimer: Timer?
+    /// Records currently matching each "matches conditions" / "enters view" trigger.
     @ObservationIgnored private var matching: [String: Set<String>] = [:]
+    @ObservationIgnored private var matchingKeys: [String: String] = [:]
     @ObservationIgnored private var recentRuns: [String: [Date]] = [:]
     @ObservationIgnored private let defaults: UserDefaults
 
     public static let maxChainDepth = 5
     public static let maxRunsPerMinute = 60
+    /// A repeating step runs for at most this many items per run.
+    public static let maxRepeatItems = 100
 
     public init(session: BaseSession, services: AutomationServices, defaults: UserDefaults = .standard) {
         self.session = session
@@ -58,9 +70,12 @@ public final class AutomationEngine {
     // MARK: - Triggers
 
     func handle(_ changes: ChangeSet) {
-        if changes.automationsChanged { rebuildMatchingCache() }
+        // View edits change which records an "enters view" trigger sees, so re-baseline on schema changes too.
+        if changes.automationsChanged || changes.schemaChanged { rebuildMatchingCache() }
         guard changes.hasRecordChanges else { return }
-        let fire = !changes.origin.isRemote && changes.origin.automationDepth < Self.maxChainDepth
+        // Record triggers run where the change was made: on this Mac for its own edits, and on the
+        // automation host for an assistant's edits. Other Macs' edits run on those Macs.
+        let fire = (changes.origin == .agent ? isScheduleHost : !changes.origin.isRemote) && changes.origin.automationDepth < Self.maxChainDepth
         let depth = changes.origin.automationDepth
 
         for automation in document.automations {
@@ -80,10 +95,17 @@ public final class AutomationEngine {
                     if !watched.isEmpty && watched.isDisjoint(with: fieldIDs) { continue }
                     start(automation, recordID: recordID, trigger: "Record updated", depth: depth)
                 }
-            case .recordMatchesConditions:
-                guard let filter = trigger.filter else { continue }
+            case .recordMatchesConditions, .recordEntersView:
+                guard let filter = membershipFilter(of: automation) else { continue }
                 var current = matching[automation.id] ?? []
                 for recordID in changes.deletedRecords.keys { current.remove(recordID) }
+                // Records brought back by undo rejoin silently, like records that were already there.
+                for (recordID, t) in changes.restoredRecords where t == tableID {
+                    if let record = document.record(recordID), document.matches(record, filter: filter) { current.insert(recordID) }
+                }
+                let label = trigger.kind == .recordEntersView
+                    ? "Record entered view “\(document.view(trigger.viewID)?.name ?? "")”"
+                    : "Record matched conditions"
                 let candidates = Array(changes.createdRecords.keys) + Array(changes.updatedRecords.keys)
                 for recordID in candidates {
                     guard let record = document.record(recordID), record.tableID == tableID else { continue }
@@ -92,7 +114,7 @@ public final class AutomationEngine {
                     if nowMatches {
                         current.insert(recordID)
                         if !wasMatching && fire && automation.enabled {
-                            start(automation, recordID: recordID, trigger: "Record matched conditions", depth: depth)
+                            start(automation, recordID: recordID, trigger: label, depth: depth)
                         }
                     } else {
                         current.remove(recordID)
@@ -105,25 +127,37 @@ public final class AutomationEngine {
         }
     }
 
+    /// The filter a record must match to count as "in" a conditions or view trigger.
+    private func membershipFilter(of automation: AutomationModel) -> FilterGroup? {
+        let trigger = automation.trigger
+        switch trigger.kind {
+        case .recordMatchesConditions:
+            return trigger.filter
+        case .recordEntersView:
+            // Only the view's filter counts; search text and collapsed groups are per-window state.
+            guard let view = document.view(trigger.viewID), view.tableID == trigger.tableID else { return nil }
+            return view.config.filter ?? FilterGroup()
+        default:
+            return nil
+        }
+    }
+
     private func rebuildMatchingCache() {
         var fresh: [String: Set<String>] = [:]
-        for automation in document.automations where automation.trigger.kind == .recordMatchesConditions {
-            guard let tableID = automation.trigger.tableID, let filter = automation.trigger.filter else { continue }
-            // Keep what we already knew so edits to other automations don't re-arm this one.
-            if let existing = matching[automation.id], existingFilterKey[automation.id] == filterKey(automation) {
+        var keys: [String: String] = [:]
+        for automation in document.automations {
+            guard let tableID = automation.trigger.tableID, let filter = membershipFilter(of: automation) else { continue }
+            let key = JSONValue(encoding: automation.trigger).jsonString + "|" + JSONValue(encoding: filter).jsonString
+            keys[automation.id] = key
+            // Keep what we already knew so edits elsewhere don't re-arm this trigger.
+            if let existing = matching[automation.id], matchingKeys[automation.id] == key {
                 fresh[automation.id] = existing
                 continue
             }
             fresh[automation.id] = Set(document.records(in: tableID).filter { document.matches($0, filter: filter) }.map(\.id))
-            existingFilterKey[automation.id] = filterKey(automation)
         }
         matching = fresh
-    }
-
-    @ObservationIgnored private var existingFilterKey: [String: String] = [:]
-
-    private func filterKey(_ a: AutomationModel) -> String {
-        JSONValue(encoding: a.trigger).jsonString
+        matchingKeys = keys
     }
 
     public func formSubmitted(viewID: String, recordID: String) {
@@ -137,15 +171,67 @@ public final class AutomationEngine {
         start(automation, recordID: recordID, trigger: "Button clicked", depth: 0)
     }
 
-    /// Runs an automation now (the editor's "Test" button). Uses `recordID` or the first record in the trigger table.
+    public enum WebhookResult: Sendable, Equatable {
+        case accepted(runID: String)
+        case notFound
+        case unauthorized
+        case disabled
+        case rateLimited
+    }
+
+    /// Starts a webhook automation for a request whose URL carried `token`. The request is kept as the
+    /// automation's sample even when it's turned off, so it can be set up with real data.
+    public func webhookReceived(automationID: String, token: String, request: WebhookRequest) async -> WebhookResult {
+        guard let automation = document.automation(automationID), automation.trigger.kind == .webhookReceived else { return .notFound }
+        guard let expected = automation.trigger.webhookToken, !expected.isEmpty, Webhooks.constantTimeEquals(token, expected) else {
+            return .unauthorized
+        }
+        lastWebhookRequests[automationID] = request
+        guard automation.enabled else { return .disabled }
+        guard let runID = start(automation, recordID: nil, trigger: "Webhook received (\(request.method))", depth: 0, webhook: request) else {
+            return .rateLimited
+        }
+        return .accepted(runID: runID)
+    }
+
+    /// Answers a request received by the app's webhook server, routing it to whichever open base
+    /// owns the automation in its URL.
+    public static func respond(to request: WebhookRequest, engines: [AutomationEngine]) async -> WebhookResponse {
+        guard let route = Webhooks.route(request.path) else { return .error(404, "Not found") }
+        guard request.method == "GET" || request.method == "POST" else {
+            return .error(405, "Use GET or POST", headers: ["Allow": "GET, POST"])
+        }
+        guard let engine = engines.first(where: { $0.document.automation(route.automationID) != nil }) else {
+            return .error(404, "No automation matches this URL")
+        }
+        switch await engine.webhookReceived(automationID: route.automationID, token: route.token, request: request) {
+        case .accepted(let runID):
+            return WebhookResponse(status: 200, body: .object(["ok": .bool(true), "runId": .string(runID)]))
+        case .notFound:
+            return .error(404, "No automation matches this URL")
+        case .unauthorized:
+            return .error(401, "The webhook token doesn't match")
+        case .disabled:
+            return .error(409, "This automation is turned off")
+        case .rateLimited:
+            return .error(429, "This automation ran more than \(maxRunsPerMinute) times in the last minute")
+        }
+    }
+
+    /// Runs an automation now (the editor's "Test" button). Uses `recordID` or the first record the
+    /// trigger could fire for; webhook automations reuse the last request they received.
     @discardableResult
     public func runNow(_ automationID: String, recordID: String? = nil) async -> AutomationRun? {
         guard let automation = document.automation(automationID) else { return nil }
         var rid = recordID
         if rid == nil, automation.trigger.kind.providesRecord, let t = automation.trigger.tableID {
-            rid = document.records(in: t).first?.id
+            if automation.trigger.kind == .recordEntersView, let filter = membershipFilter(of: automation) {
+                rid = document.records(in: t).first { document.matches($0, filter: filter) }?.id
+            }
+            rid = rid ?? document.records(in: t).first?.id
         }
-        return await execute(automation, recordID: rid, trigger: "Run manually", depth: 0)
+        let webhook = automation.trigger.kind == .webhookReceived ? lastWebhookRequests[automationID] : nil
+        return await execute(automation, runID: RowID.run(), recordID: rid, trigger: "Run manually", depth: 0, webhook: webhook)
     }
 
     // MARK: - Scheduling
@@ -178,7 +264,9 @@ public final class AutomationEngine {
 
     // MARK: - Execution
 
-    private func start(_ automation: AutomationModel, recordID: String?, trigger: String, depth: Int) {
+    /// Starts a run in the background and returns its id, or nil when the rate limit skipped it.
+    @discardableResult
+    private func start(_ automation: AutomationModel, recordID: String?, trigger: String, depth: Int, webhook: WebhookRequest? = nil) -> String? {
         let now = Date()
         var times = (recentRuns[automation.id] ?? []).filter { now.timeIntervalSince($0) < 60 }
         guard times.count < Self.maxRunsPerMinute else {
@@ -187,24 +275,37 @@ public final class AutomationEngine {
             run.finishedAt = now
             run.steps = [StepResult(id: "limit", name: "Rate limit", status: .skipped, message: "Skipped: more than \(Self.maxRunsPerMinute) runs in one minute")]
             session.record(run: run)
-            return
+            return nil
         }
         times.append(now)
         recentRuns[automation.id] = times
-        Task { await execute(automation, recordID: recordID, trigger: trigger, depth: depth) }
+        let runID = RowID.run()
+        Task { await execute(automation, runID: runID, recordID: recordID, trigger: trigger, depth: depth, webhook: webhook) }
+        return runID
     }
 
-    private func execute(_ automation: AutomationModel, recordID: String?, trigger: String, depth: Int) async -> AutomationRun {
-        var run = AutomationRun(automationID: automation.id, automationName: automation.name, deviceID: document.deviceID, deviceName: document.deviceName, trigger: trigger, recordID: recordID)
+    private func execute(_ automation: AutomationModel, runID: String, recordID: String?, trigger: String, depth: Int, webhook: WebhookRequest?) async -> AutomationRun {
+        var run = AutomationRun(id: runID, automationID: automation.id, automationName: automation.name, deviceID: document.deviceID, deviceName: document.deviceName, trigger: trigger, recordID: recordID)
         activeRuns += 1
         defer { activeRuns -= 1 }
         session.record(run: run)
 
-        var scope = baseScope(automation: automation, recordID: recordID)
+        var scope = baseScope(automation: automation, recordID: recordID, webhook: webhook)
         var stepsScope: [String: JSONValue] = [:]
         var failed = false
         for (index, action) in automation.actions.enumerated() {
             let name = action.label?.isEmpty == false ? action.label! : action.kind.displayName
+            if action.repeatFrom != nil {
+                scope = scope.setting("steps", .object(stepsScope))
+                let result = await performRepeating(action, in: automation, stepNumber: index + 1, scope: scope, triggerRecordID: recordID, depth: depth + 1)
+                run.steps.append(StepResult(id: action.id, name: name, status: result.status, message: result.message, logs: result.logs))
+                if let output = result.output { stepsScope["\(index + 1)"] = output }
+                if result.status == .failed {
+                    failed = true
+                    break
+                }
+                continue
+            }
             if let condition = action.condition, !condition.isEmpty {
                 let ok = recordID.flatMap { document.record($0) }.map { document.matches($0, filter: condition) } ?? false
                 if !ok {
@@ -234,7 +335,87 @@ public final class AutomationEngine {
         var logs: [String] = []
     }
 
-    private func perform(_ action: AutomationAction, scope: JSONValue, depth: Int) async -> StepOutcome {
+    struct RepeatOutcome {
+        var status: RunStatus
+        var message: String
+        var output: JSONValue?
+        var logs: [String] = []
+    }
+
+    /// Runs `action` once per item of an earlier step's list, exposing `{{item}}` and `{{index}}`.
+    private func performRepeating(_ action: AutomationAction, in automation: AutomationModel, stepNumber: Int, scope: JSONValue, triggerRecordID: String?, depth: Int) async -> RepeatOutcome {
+        guard let source = action.repeatFrom, source >= 1, source < stepNumber else {
+            return RepeatOutcome(status: .failed, message: "Choose an earlier step to repeat for")
+        }
+        let path = repeatPath(for: action, in: automation)
+        let list: [JSONValue]
+        switch TemplateRenderer.lookup("steps.\(source).\(path)", in: scope) {
+        case nil, .null?: list = []
+        case .array(let items)?: list = items
+        default: return RepeatOutcome(status: .failed, message: "“\(path)” in the output of step \(source) isn't a list")
+        }
+        guard !list.isEmpty else {
+            return RepeatOutcome(status: .skipped, message: "Nothing to repeat: the list from step \(source) is empty",
+                                 output: .object(["items": .array([]), "count": .number(0)]))
+        }
+
+        let items = list.prefix(Self.maxRepeatItems)
+        var outputs: [JSONValue] = []
+        var logs: [String] = []
+        var ran = 0, failures = 0, skipped = 0
+        func log(_ line: String) { if logs.count < 300 { logs.append(line) } }
+        for (offset, item) in items.enumerated() {
+            let number = offset + 1
+            let itemRecordID = liveRecordID(of: item)
+            if let condition = action.condition, !condition.isEmpty {
+                guard let record = document.record(itemRecordID ?? triggerRecordID), document.matches(record, filter: condition) else {
+                    skipped += 1
+                    log("Item \(number): skipped, conditions not met")
+                    continue
+                }
+            }
+            var itemScope = item
+            if case .object = item, let itemRecordID {
+                // Fresh values, so earlier steps' edits to these records show up.
+                itemScope = recordScope(itemRecordID)
+            }
+            // Update and delete steps act on the item unless told otherwise.
+            let defaultRecordID = item.objectValue != nil ? "{{item.id}}" : "{{item}}"
+            let itemContext = scope.setting("item", itemScope).setting("index", .number(Double(number)))
+            let result = await perform(action, scope: itemContext, depth: depth, defaultRecordID: defaultRecordID)
+            ran += 1
+            if result.ok {
+                outputs.append(result.output)
+                log("Item \(number): \(result.message)")
+            } else {
+                failures += 1
+                log("Item \(number) failed: \(result.message)")
+            }
+            for line in result.logs { log("  " + line) }
+        }
+
+        var message: String
+        if ran == 0 {
+            message = skipped == 1 ? "Skipped the only item: conditions not met" : "Skipped all \(skipped) items: conditions not met"
+        } else {
+            message = ran == 1 ? "Ran once" : "Ran \(ran) times"
+            if failures > 0 { message += " (\(failures) failed)" }
+            if skipped > 0 { message += ", skipped \(skipped) (conditions not met)" }
+        }
+        if list.count > items.count {
+            message += ". Only the first \(Self.maxRepeatItems) of \(list.count) items ran: a step repeats at most \(Self.maxRepeatItems) times per run"
+        }
+        let status: RunStatus = failures > 0 ? .failed : (ran == 0 ? .skipped : .succeeded)
+        return RepeatOutcome(status: status, message: message, output: .object(["items": .array(outputs), "count": .number(Double(outputs.count))]), logs: logs)
+    }
+
+    /// The id of the record an item stands for: a record object (with an `id`) or a bare record id.
+    private func liveRecordID(of item: JSONValue) -> String? {
+        guard let id = item.stringValue ?? item["id"]?.stringValue, document.record(id) != nil else { return nil }
+        return id
+    }
+
+    private func perform(_ action: AutomationAction, scope: JSONValue, depth: Int, defaultRecordID: String = "{{trigger.record.id}}") async -> StepOutcome {
         let origin = ChangeOrigin.automation(depth: depth)
         func render(_ s: String?) -> String { TemplateRenderer.render(s ?? "", scope: scope) }
 
@@ -249,7 +430,7 @@ public final class AutomationEngine {
 
         case .updateRecord:
             guard let tableID = action.tableID else { return StepOutcome(ok: false, message: "Choose a table") }
-            let rid = render(action.recordIDTemplate?.isEmpty == false ? action.recordIDTemplate : "{{trigger.record.id}}").trimmingCharacters(in: .whitespaces)
+            let rid = render(action.recordIDTemplate?.isEmpty == false ? action.recordIDTemplate : defaultRecordID).trimmingCharacters(in: .whitespaces)
             guard let record = document.record(rid), record.tableID == tableID else {
                 return StepOutcome(ok: false, message: "Couldn't find record “\(rid)” in \(document.table(tableID)?.name ?? "the table")")
             }
@@ -258,7 +439,7 @@ public final class AutomationEngine {
             return StepOutcome(ok: true, message: "Updated \(document.primaryTitle(recordID: rid))", output: recordScope(rid))
 
         case .deleteRecord:
-            let rid = render(action.recordIDTemplate?.isEmpty == false ? action.recordIDTemplate : "{{trigger.record.id}}").trimmingCharacters(in: .whitespaces)
+            let rid = render(action.recordIDTemplate?.isEmpty == false ? action.recordIDTemplate : defaultRecordID).trimmingCharacters(in: .whitespaces)
             guard document.record(rid) != nil else { return StepOutcome(ok: false, message: "Couldn't find record “\(rid)”") }
             let title = document.primaryTitle(recordID: rid)
             document.deleteRecords([rid], origin: origin)
@@ -340,6 +521,39 @@ public final class AutomationEngine {
             } catch {
                 return StepOutcome(ok: false, message: "Shortcut failed: \(error.localizedDescription)")
             }
+
+        case .sendEmail:
+            let to: [String], cc: [String], bcc: [String]
+            do {
+                to = try MailScript.addresses(from: render(action.to))
+                cc = try MailScript.addresses(from: render(action.cc))
+                bcc = try MailScript.addresses(from: render(action.bcc))
+            } catch let error as MailScript.InvalidAddress {
+                return StepOutcome(ok: false, message: error.message)
+            } catch {
+                return StepOutcome(ok: false, message: error.localizedDescription)
+            }
+            guard !to.isEmpty else { return StepOutcome(ok: false, message: "Add at least one recipient in To") }
+            let subject = render(action.subject).components(separatedBy: .newlines).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            do {
+                try await services.sendEmail(to: to, cc: cc, bcc: bcc, subject: subject, body: render(action.body))
+                return StepOutcome(ok: true, message: "Sent “\(subject)” to \(to.joined(separator: ", "))", output: .object([
+                    "to": .array(to.map(JSONValue.string)),
+                    "subject": .string(subject),
+                ]))
+            } catch {
+                return StepOutcome(ok: false, message: "Email failed: \(error.localizedDescription)")
+            }
+
+        case .generateText:
+            let prompt = render(action.prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !prompt.isEmpty else { return StepOutcome(ok: false, message: "Write a prompt") }
+            do {
+                let text = try await services.generateText(prompt: prompt, model: action.aiModel)
+                return StepOutcome(ok: true, message: "Generated \(text.count) characters", output: .object(["text": .string(text)]))
+            } catch {
+                return StepOutcome(ok: false, message: "AI failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -392,9 +606,12 @@ public final class AutomationEngine {
         return .object(obj)
     }
 
-    func baseScope(automation: AutomationModel, recordID: String?) -> JSONValue {
+    func baseScope(automation: AutomationModel, recordID: String?, webhook: WebhookRequest? = nil) -> JSONValue {
         var trigger: [String: JSONValue] = ["type": .string(automation.trigger.kind.rawValue), "time": .string(DateCoding.iso8601String(Date()))]
         if let recordID { trigger["record"] = recordScope(recordID) }
+        if automation.trigger.kind == .webhookReceived {
+            trigger.merge((webhook ?? WebhookRequest(method: "", path: "")).scope) { _, new in new }
+        }
         if let t = document.table(automation.trigger.tableID) {
             trigger["table"] = .object(["id": .string(t.id), "name": .string(t.name)])
         }
@@ -422,8 +639,42 @@ public final class AutomationEngine {
                 tokens.append(.init(label: "Trigger record › \(f.name)", path: "trigger.record.\(f.name)"))
             }
         }
+        if automation.trigger.kind == .webhookReceived {
+            let sample = lastWebhookRequests[automation.id]
+            tokens.append(.init(label: "Webhook body", path: "trigger.body"))
+            for key in sample?.body.objectValue?.keys.sorted() ?? [] {
+                tokens.append(.init(label: "Webhook body › \(key)", path: "trigger.body.\(key)"))
+            }
+            tokens.append(.init(label: "Webhook query string", path: "trigger.query"))
+            for key in sample?.query.keys.sorted() ?? [] {
+                tokens.append(.init(label: "Webhook query › \(key)", path: "trigger.query.\(key)"))
+            }
+            tokens.append(.init(label: "Webhook method", path: "trigger.method"))
+        }
+        if stepIndex < automation.actions.count, automation.actions[stepIndex].repeatFrom != nil {
+            tokens.append(.init(label: "Current item", path: "item"))
+            tokens.append(.init(label: "Item number (1, 2, 3…)", path: "index"))
+            if let tableID = repeatItemTableID(for: automation, stepIndex: stepIndex) {
+                tokens.append(.init(label: "Item › Record ID", path: "item.id"))
+                tokens.append(.init(label: "Item › Record link", path: "item.url"))
+                for f in document.fields(in: tableID) {
+                    tokens.append(.init(label: "Item › \(f.name)", path: "item.\(f.name)"))
+                }
+            }
+        }
         for (i, action) in automation.actions.prefix(stepIndex).enumerated() {
             let n = i + 1
+            if action.repeatFrom != nil {
+                tokens.append(.init(label: "Step \(n) › Number of results", path: "steps.\(n).count"))
+                switch action.kind {
+                case .createRecord, .updateRecord:
+                    tokens.append(.init(label: "Step \(n) › Record IDs", path: "steps.\(n).items.id"))
+                    tokens.append(.init(label: "Step \(n) › Record names", path: "steps.\(n).items.title"))
+                default:
+                    tokens.append(.init(label: "Step \(n) › Results", path: "steps.\(n).items"))
+                }
+                continue
+            }
             switch action.kind {
             case .createRecord, .updateRecord:
                 tokens.append(.init(label: "Step \(n) › Record ID", path: "steps.\(n).id"))
@@ -441,11 +692,60 @@ public final class AutomationEngine {
                 tokens.append(.init(label: "Step \(n) › Output (use output.set keys)", path: "steps.\(n)"))
             case .runShortcut:
                 tokens.append(.init(label: "Step \(n) › Shortcut output", path: "steps.\(n).output"))
+            case .generateText:
+                tokens.append(.init(label: "Step \(n) › Generated text", path: "steps.\(n).text"))
             default:
                 break
             }
         }
         return tokens
+    }
+
+    // MARK: - Repeat for each
+
+    /// An earlier step whose output holds a list a later step can repeat over.
+    public struct RepeatSource: Hashable, Sendable {
+        /// 1-based step number.
+        public var step: Int
+        public var title: String
+        /// Where the list sits in the step's output, or nil when the author says (scripts, HTTP).
+        public var path: String?
+        /// The table the list's records belong to, when the items are records.
+        public var tableID: String?
+    }
+
+    /// Steps before `stepIndex` (0-based) that a step can repeat over.
+    public func repeatSources(for automation: AutomationModel, before stepIndex: Int) -> [RepeatSource] {
+        automation.actions.prefix(stepIndex).enumerated().compactMap { i, action in
+            let title = "Step \(i + 1): " + (action.label?.isEmpty == false ? action.label! : action.kind.displayName)
+            if action.repeatFrom != nil {
+                let records = action.kind == .createRecord || action.kind == .updateRecord
+                return RepeatSource(step: i + 1, title: title, path: "items", tableID: records ? action.tableID : nil)
+            }
+            switch action.kind {
+            case .findRecords: return RepeatSource(step: i + 1, title: title, path: "records", tableID: action.tableID)
+            case .runScript, .httpRequest: return RepeatSource(step: i + 1, title: title, path: nil, tableID: nil)
+            default: return nil
+            }
+        }
+    }
+
+    /// The table of the records a repeating step at `stepIndex` runs over, if its items are records.
+    public func repeatItemTableID(for automation: AutomationModel, stepIndex: Int) -> String? {
+        guard stepIndex < automation.actions.count, let from = automation.actions[stepIndex].repeatFrom,
+              let source = repeatSources(for: automation, before: stepIndex).first(where: { $0.step == from }),
+              source.path == repeatPath(for: automation.actions[stepIndex], in: automation)
+        else { return nil }
+        return source.tableID
+    }
+
+    /// The list a repeating step reads: its own path, else its source step's natural list.
+    public func repeatPath(for action: AutomationAction, in automation: AutomationModel) -> String {
+        if let path = action.repeatPath?.trimmingCharacters(in: .whitespaces), !path.isEmpty { return path }
+        if let from = action.repeatFrom, from >= 1, from <= automation.actions.count, automation.actions[from - 1].repeatFrom != nil {
+            return "items"
+        }
+        return "records"
     }
 }
 

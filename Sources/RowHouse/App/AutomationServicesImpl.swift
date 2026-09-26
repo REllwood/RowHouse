@@ -2,7 +2,7 @@ import Foundation
 import RowHouseCore
 import UserNotifications
 
-/// Real side effects for automations: macOS notifications, HTTP and the Shortcuts app.
+/// Real side effects for automations: macOS notifications, HTTP, the Shortcuts app and Mail.
 struct SystemAutomationServices: AutomationServices {
     struct Failure: LocalizedError {
         var message: String
@@ -62,6 +62,48 @@ struct SystemAutomationServices: AutomationServices {
             let out = (try? Data(contentsOf: outputURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
             return out.trimmingCharacters(in: .whitespacesAndNewlines)
         }.value
+    }
+
+    func generateText(prompt: String, model: String?) async throws -> String {
+        try await AIConfiguration.makeService().generateText(prompt: prompt, model: model)
+    }
+
+    func sendEmail(to: [String], cc: [String], bcc: [String], subject: String, body: String) async throws {
+        let source = MailScript.sendScript(to: to, cc: cc, bcc: bcc, subject: subject, body: body)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.appleScriptQueue.async {
+                continuation.resume(with: Self.runMailScript(source))
+            }
+        }
+    }
+
+    /// NSAppleScript mustn't be used from two threads at once, so every script runs on this one serial
+    /// queue. Keeping it off the main thread means launching Mail, or waiting for the user to answer the
+    /// Automation permission prompt, never freezes the app.
+    private static let appleScriptQueue = DispatchQueue(label: "com.rellwood.RowHouse.applescript", qos: .userInitiated)
+
+    private static func runMailScript(_ source: String) -> Result<Void, Error> {
+        guard let script = NSAppleScript(source: source) else { return .failure(Failure(message: "Couldn't prepare the email")) }
+        var errorInfo: NSDictionary?
+        let result = script.executeAndReturnError(&errorInfo)
+        if let errorInfo {
+            let number = (errorInfo[NSAppleScript.errorNumber] as? NSNumber)?.intValue ?? 0
+            let text = errorInfo[NSAppleScript.errorMessage] as? String ?? "Mail reported an error"
+            switch number {
+            case -1743:
+                return .failure(Failure(message: "RowHouse isn't allowed to control Mail. Turn on Mail for RowHouse in System Settings › Privacy & Security › Automation."))
+            case MailScript.noAccountErrorNumber:
+                return .failure(Failure(message: "Mail has no email account set up. Add one in Mail › Settings › Accounts."))
+            case -1712:
+                return .failure(Failure(message: "Mail didn't respond in time. Open Mail and check that it isn't waiting for you."))
+            case -600, -10810:
+                return .failure(Failure(message: "Couldn't open Mail."))
+            default:
+                return .failure(Failure(message: text))
+            }
+        }
+        guard result.booleanValue else { return .failure(Failure(message: "Mail couldn't send the message. Check your account in Mail.")) }
+        return .success(())
     }
 
     /// Names of the user's Shortcuts, for the action editor's picker.

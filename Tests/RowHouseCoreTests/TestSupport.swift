@@ -29,12 +29,25 @@ final class FakeServices: AutomationServices, @unchecked Sendable {
     private var _notifications: [(String, String)] = []
     private var _requests: [URLRequest] = []
     private var _shortcuts: [(String, String)] = []
+    private var _emails: [SentEmail] = []
+    private var _prompts: [String] = []
     var responseStatus = 200
     var responseBody = Data("{\"ok\":true}".utf8)
+    var emailError: Error?
+
+    struct SentEmail: Equatable {
+        var to: [String]
+        var cc: [String]
+        var bcc: [String]
+        var subject: String
+        var body: String
+    }
 
     var notifications: [(String, String)] { lock.withLock { _notifications } }
     var requests: [URLRequest] { lock.withLock { _requests } }
     var shortcuts: [(String, String)] { lock.withLock { _shortcuts } }
+    var emails: [SentEmail] { lock.withLock { _emails } }
+    var prompts: [String] { lock.withLock { _prompts } }
 
     func sendNotification(title: String, body: String) async throws {
         lock.withLock { _notifications.append((title, body)) }
@@ -48,5 +61,15 @@ final class FakeServices: AutomationServices, @unchecked Sendable {
     func runShortcut(named name: String, input: String) async throws -> String {
         lock.withLock { _shortcuts.append((name, input)) }
         return "shortcut:\(input)"
+    }
+
+    func sendEmail(to: [String], cc: [String], bcc: [String], subject: String, body: String) async throws {
+        if let emailError = lock.withLock({ emailError }) { throw emailError }
+        lock.withLock { _emails.append(SentEmail(to: to, cc: cc, bcc: bcc, subject: subject, body: body)) }
+    }
+
+    func generateText(prompt: String, model: String?) async throws -> String {
+        lock.withLock { _prompts.append(prompt) }
+        return "AI: " + prompt
     }
 }

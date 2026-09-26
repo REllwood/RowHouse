@@ -7,6 +7,7 @@ struct SidebarView: View {
     @State private var renaming: RenameTarget?
     @State private var renameText = ""
     @State private var confirmDelete: DeleteTarget?
+    @State private var collaboratorsBase: String?
     @State private var collapsed: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "RowHouse.sidebar.collapsed") ?? [])
 
     var body: some View {
@@ -46,6 +47,11 @@ struct SidebarView: View {
         } message: {
             Text(confirmDelete?.message ?? "")
         }
+        .sheet(isPresented: Binding(get: { collaboratorsBase != nil }, set: { if !$0 { collaboratorsBase = nil } })) {
+            if let document = app.session(collaboratorsBase)?.document {
+                CollaboratorsSheet(document: document)
+            }
+        }
     }
 
     private func expandedBinding(_ id: String) -> Binding<Bool> {
@@ -70,7 +76,19 @@ struct SidebarView: View {
             let id = session.document.createTable(name: "Table \(session.document.tables.count + 1)")
             state.destination = .table(base: session.id, table: id)
         }
+        Button("Duplicate Base") {
+            Task {
+                if let id = await app.duplicateBase(session.id), let table = app.mainTable(of: id) {
+                    state.destination = .table(base: id, table: table.id)
+                }
+            }
+        }
+        Button("Collaborators…") { collaboratorsBase = session.id }
         Divider()
+        Button("Run Script…") { state.scriptBase = BaseSheetTarget(baseID: session.id) }
+        Button("Trash…") { state.trashBase = BaseSheetTarget(baseID: session.id) }
+        Divider()
+        Button("Export Backup…") { app.exportBackup(session.id) }
         Button("Show in Finder") { app.revealInFinder(session.id) }
         Divider()
         Button("Move Base to Trash…", role: .destructive) {
@@ -230,6 +248,13 @@ private struct SidebarFooter: View {
                     Button("New Base…") { state.newBaseSheet = true }
                     Button("Import CSV…") { state.csvImportSheet = true }
                     Button("Import from Airtable…") { state.airtableImportSheet = true }
+                    Button("Restore Backup…") {
+                        Task {
+                            if let id = await app.importBackup(), let table = app.mainTable(of: id) {
+                                state.destination = .table(base: id, table: table.id)
+                            }
+                        }
+                    }
                 } label: {
                     Label("New Base", systemImage: "plus")
                 }

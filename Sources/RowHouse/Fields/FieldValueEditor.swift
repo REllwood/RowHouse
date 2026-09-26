@@ -82,10 +82,23 @@ struct FieldValueEditor: View {
                 }
             }
         case .multilineText:
-            CommitTextEditor(text: value.stringValue ?? "", initialText: initialText, minHeight: style == .popover ? 160 : 90, commitOnChange: style == .form) { text in
-                let v: JSONValue = text.isEmpty ? .null : .string(text)
-                if v != value { value = v }
+            if field.options.richText == true {
+                RichTextEditor(text: value.stringValue ?? "", initialText: initialText, minHeight: style == .popover ? 160 : 90, commitOnChange: style == .form, startsInPreview: style == .detail) { text in
+                    let v: JSONValue = text.isEmpty ? .null : .string(text)
+                    if v != value { value = v }
+                }
+            } else {
+                CommitTextEditor(text: value.stringValue ?? "", initialText: initialText, minHeight: style == .popover ? 160 : 90, commitOnChange: style == .form) { text in
+                    let v: JSONValue = text.isEmpty ? .null : .string(text)
+                    if v != value { value = v }
+                }
             }
+        case .collaborator:
+            CollaboratorEditor(document: document, field: field, value: $value, style: style, initialText: initialText)
+        case .barcode:
+            BarcodeEditor(value: $value, style: style, initialText: initialText)
+        case .aiText:
+            AITextEditor(session: session, field: field, value: $value, recordID: recordID, style: style, initialText: initialText)
         case .checkbox:
             Toggle(isOn: Binding(get: { value.boolValue ?? false }, set: { value = .bool($0) })) {
                 Text(value.boolValue == true ? "Checked" : "Unchecked").foregroundStyle(.secondary)
@@ -597,12 +610,17 @@ struct ComputedValueView: View {
         switch v {
         case .error(let message):
             Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
+        case .collaborators(let people):
+            FlowLayout(spacing: 4) {
+                ForEach(people) { PersonChip(person: $0) }
+            }
         case .list(let items) where field.type == .lookup:
             let target = document.field(field.options.targetFieldID)
             FlowLayout(spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     switch item {
                     case .choice(let c): ChoiceChip(name: c.name, color: c.color)
+                    case .collaborators(let people): ForEach(people) { PersonChip(person: $0, compact: true) }
                     case .attachments(let atts):
                         ForEach(atts) { att in
                             AttachmentThumbnail(url: session.storage.url(for: att), attachment: att, size: 48)
@@ -646,7 +664,7 @@ struct CellEditorPopover: View {
                 FieldValueEditor(session: session, field: field, value: document.binding(recordID: recordID, field: field), recordID: recordID, style: .popover, initialText: initialText)
             }
             .padding(12)
-            .frame(width: field.type == .date ? 280 : 320)
+            .frame(width: field.type == .date ? 280 : (field.type == .aiText || field.options.richText == true && field.type == .multilineText ? 400 : 320))
             .fixedSize(horizontal: false, vertical: true)
             .onExitCommand(perform: close)
         }

@@ -168,7 +168,7 @@ extension BaseDocument {
             }
             values.append(set)
         }
-        createRecords(in: tableID, values: values)
+        createRecords(in: tableID, values: values, applyingDefaults: false)
     }
 
     /// Exports a view (visible fields, filtered/sorted records) as CSV text.

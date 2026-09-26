@@ -7,6 +7,8 @@ public struct BaseInfo: Equatable, Sendable {
     public var description: String = ""
     /// The device that runs scheduled automations for this base.
     public var automationHostDeviceID: String?
+    /// People who can be chosen in collaborator fields.
+    public var people: [Person] = []
 
     public init() {}
 }
@@ -18,6 +20,21 @@ public struct TableModel: Identifiable, Equatable, Sendable {
     public var primaryFieldID: String?
     public var description: String
     public var icon: String?
+    public var recordTemplates: [RecordTemplate] = []
+}
+
+/// Preset values for new records ("record templates").
+public struct RecordTemplate: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    /// Field id → stored value.
+    public var values: [String: JSONValue]
+
+    public init(id: String = RowID.make("rtp"), name: String, values: [String: JSONValue]) {
+        self.id = id
+        self.name = name
+        self.values = values
+    }
 }
 
 public struct FieldModel: Identifiable, Equatable, Sendable {
@@ -28,6 +45,16 @@ public struct FieldModel: Identifiable, Equatable, Sendable {
     public var options: FieldOptions
     public var order: Double
     public var description: String
+
+    public init(id: String, tableID: String, name: String, type: FieldType, options: FieldOptions = FieldOptions(), order: Double = 0, description: String = "") {
+        self.id = id
+        self.tableID = tableID
+        self.name = name
+        self.type = type
+        self.options = options
+        self.order = order
+        self.description = description
+    }
 
     public var choices: [SelectChoice] { options.choices ?? [] }
 
@@ -75,12 +102,21 @@ public struct CommentModel: Identifiable, Equatable, Sendable {
     public var authorDeviceID: String
     public var authorName: String
     public var createdTime: Date
+    /// People @mentioned in the text (person ids).
+    public var mentions: [String] = []
 }
 
 public struct DeviceInfo: Identifiable, Equatable, Sendable {
+    /// `kind` of a device that is an AI assistant working through the MCP server rather than a Mac.
+    public static let agentKind = "agent"
+
     public var id: String
     public var name: String
     public var lastSeen: Date
+    /// nil for a Mac running RowHouse.
+    public var kind: String? = nil
+
+    public var isAgent: Bool { kind == Self.agentKind }
 }
 
 public struct AttachmentInfo: Codable, Hashable, Sendable, Identifiable {
@@ -116,31 +152,45 @@ public struct AttachmentInfo: Codable, Hashable, Sendable, Identifiable {
 // MARK: - Views
 
 public enum ViewType: String, Codable, CaseIterable, Sendable, Identifiable {
-    case grid, kanban, calendar, gallery, timeline, form, chart
+    case grid, list, kanban, calendar, gallery, timeline, gantt, form, chart, dashboard
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .grid: "Grid"
+        case .list: "List"
         case .kanban: "Kanban"
         case .calendar: "Calendar"
         case .gallery: "Gallery"
         case .timeline: "Timeline"
+        case .gantt: "Gantt"
         case .form: "Form"
         case .chart: "Chart"
+        case .dashboard: "Dashboard"
         }
     }
 
     public var symbolName: String {
         switch self {
         case .grid: "tablecells"
+        case .list: "list.bullet.indent"
         case .kanban: "rectangle.split.3x1"
         case .calendar: "calendar"
         case .gallery: "square.grid.2x2"
         case .timeline: "chart.bar.xaxis"
+        case .gantt: "chart.bar.doc.horizontal"
         case .form: "list.bullet.rectangle"
         case .chart: "chart.pie"
+        case .dashboard: "rectangle.3.group"
+        }
+    }
+
+    /// View types that show records under group headers when the view has groups.
+    public var supportsGrouping: Bool {
+        switch self {
+        case .grid, .list, .timeline, .gantt: true
+        default: false
         }
     }
 }
@@ -210,7 +260,7 @@ public enum SummaryFunction: String, Codable, CaseIterable, Sendable {
         }
         if type == .checkbox { base = [.none, .checked, .unchecked, .percentFilled, .percentEmpty] }
         if type.isDateLike { base += [.earliest, .latest, .range] }
-        if type.isTextual || type == .singleSelect { base.append(.unique) }
+        if type.isTextual || type.isPeople || type == .singleSelect || type == .barcode { base.append(.unique) }
         return base
     }
 }
@@ -222,6 +272,8 @@ public struct FormConfig: Codable, Hashable, Sendable {
     public var requiredFieldIDs: [String]?
     public var submitLabel: String?
     public var successMessage: String?
+    /// Field id → conditions on earlier answers that must hold for the field to be shown.
+    public var fieldConditions: [String: FilterGroup]?
 
     public init() {}
 }
@@ -257,9 +309,73 @@ public struct ChartConfig: Codable, Hashable, Sendable {
 }
 
 public enum TimelineScale: String, Codable, CaseIterable, Sendable {
-    case week, month, quarter
+    case week, month, quarter, year
 
     public var displayName: String { rawValue.capitalized }
+}
+
+public enum CalendarMode: String, Codable, CaseIterable, Sendable {
+    case month, week
+
+    public var displayName: String { rawValue.capitalized }
+}
+
+public enum DashboardWidgetKind: String, Codable, CaseIterable, Sendable {
+    case number, chart, list, progress
+
+    public var displayName: String {
+        switch self {
+        case .number: "Number"
+        case .chart: "Chart"
+        case .list: "Record list"
+        case .progress: "Progress"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .number: "number"
+        case .chart: "chart.bar.fill"
+        case .list: "list.bullet"
+        case .progress: "gauge.with.dots.needle.67percent"
+        }
+    }
+}
+
+/// One tile on a dashboard. Which properties apply depends on `kind`: numbers aggregate `fieldID`
+/// over records matching `filter`, charts use `chart`, lists show the first `limit` records by
+/// `sort`, and progress shows the share of records that match `filter`.
+public struct DashboardWidget: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var kind: DashboardWidgetKind
+    public var title: String?
+    /// Columns the widget spans (1 or 2).
+    public var span: Int?
+    public var filter: FilterGroup?
+    public var aggregate: ChartAggregate?
+    public var fieldID: String?
+    public var chart: ChartConfig?
+    public var sort: SortSpec?
+    public var fieldIDs: [String]?
+    public var limit: Int?
+
+    public init(id: String = RowID.make("wdg"), kind: DashboardWidgetKind, title: String? = nil, span: Int? = nil) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.span = span
+    }
+
+    public var columnSpan: Int { min(2, max(1, span ?? 1)) }
+    public var recordLimit: Int { min(50, max(1, limit ?? 5)) }
+}
+
+public struct DashboardConfig: Codable, Hashable, Sendable {
+    public var widgets: [DashboardWidget]
+
+    public init(widgets: [DashboardWidget] = []) {
+        self.widgets = widgets
+    }
 }
 
 public struct ViewConfig: Codable, Hashable, Sendable {
@@ -281,12 +397,40 @@ public struct ViewConfig: Codable, Hashable, Sendable {
     public var timelineScale: TimelineScale?
     /// Colors records by the value of a single-select field.
     public var colorFieldID: String?
+    /// Colors records by conditions instead (first matching rule wins); takes precedence over `colorFieldID`.
+    public var colorRules: [ColorRule]?
     public var form: FormConfig?
     public var chart: ChartConfig?
+    /// A locked view's filters, sorts, grouping, fields and layout can't be changed (records can).
+    public var locked: Bool?
+    /// List view: a link field whose linked records are nested under each record.
+    public var listChildLinkFieldID: String?
+    /// Gantt view: a link field listing the records each record depends on.
+    public var dependencyFieldID: String?
+    public var dashboard: DashboardConfig?
+    /// Kanban: hide stacks that have no records.
+    public var hideEmptyStacks: Bool?
+    /// Kanban: collapsed stacks, by choice id ("" is the uncategorized stack).
+    public var collapsedStacks: [String]?
+    public var calendarMode: CalendarMode?
 
     public init() {}
 
     public var hidden: Set<String> { Set(hiddenFieldIDs ?? []) }
+    public var isLocked: Bool { locked == true }
+}
+
+/// "Colour records using conditions": records matching `filter` get `color`.
+public struct ColorRule: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var filter: FilterGroup
+    public var color: ChoiceColor
+
+    public init(id: String = RowID.make("clr"), filter: FilterGroup = FilterGroup(), color: ChoiceColor) {
+        self.id = id
+        self.filter = filter
+        self.color = color
+    }
 }
 
 public struct ViewModel: Identifiable, Equatable, Sendable {

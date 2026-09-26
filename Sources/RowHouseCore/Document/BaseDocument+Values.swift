@@ -88,7 +88,7 @@ extension BaseDocument {
         case .singleLineText:
             let single = text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
             return single.isEmpty ? .null : .string(single)
-        case .multilineText:
+        case .multilineText, .aiText:
             return text.isEmpty ? .null : .string(text)
         case .email, .url, .phoneNumber:
             return trimmed.isEmpty ? .null : .string(trimmed)
@@ -146,9 +146,58 @@ extension BaseDocument {
             }
             if field.options.singleRecordLink == true, let first = ids.first { ids = [first] }
             return ids.isEmpty ? .null : .array(ids.map(JSONValue.string))
-        case .attachment, .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button:
+        case .collaborator:
+            return collaboratorValue(from: trimmed, field: field, createMissing: createMissingChoices)
+        case .barcode:
+            return trimmed.isEmpty ? .null : BarcodeValue(text: trimmed).json
+        case .attachment, .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button,
+             .createdBy, .lastModifiedBy:
             return .null
         }
+    }
+
+    // MARK: - Default values
+
+    /// The value a new record gets for `field` when none is provided, or nil when there's none.
+    /// A date default of `{"today": true}` resolves to the day (or moment) the record is created.
+    public func resolvedDefaultValue(for field: FieldModel, now: Date = Date()) -> JSONValue? {
+        guard field.type.supportsDefaultValue, !field.isInverseLink, let value = field.options.defaultValue, !value.isNull else { return nil }
+        switch field.type {
+        case .date:
+            if value["today"]?.boolValue == true { return .string(DateCoding.encode(now, includeTime: field.includesTime)) }
+            guard let text = value.stringValue, let date = DateCoding.decode(text) else { return nil }
+            return .string(DateCoding.encode(date, includeTime: field.includesTime))
+        case .singleSelect:
+            guard let id = value.stringValue ?? value.stringArray.first, field.choice(id: id) != nil else { return nil }
+            return .string(id)
+        case .multipleSelects:
+            let ids = (value.stringValue.map { [$0] } ?? value.stringArray).filter { field.choice(id: $0) != nil }
+            return ids.isEmpty ? nil : .array(ids.map(JSONValue.string))
+        case .collaborator:
+            let ids = value.collaboratorIDs.filter { person($0) != nil }
+            return ids.isEmpty ? nil : storedCollaborators(ids, field: field)
+        case .checkbox:
+            return value.boolValue == true ? .bool(true) : nil
+        case .number, .currency, .percent, .duration:
+            guard let n = value.numberValue, n.isFinite else { return nil }
+            return .number(n)
+        case .rating:
+            guard let n = value.numberValue, n.isFinite else { return nil }
+            let clamped = min(max(0, n.rounded()), Double(field.options.ratingMax ?? 5))
+            return clamped == 0 ? nil : .number(clamped)
+        default:
+            guard let text = value.stringValue, !text.isEmpty else { return nil }
+            return .string(text)
+        }
+    }
+
+    /// Default values for every field of a table that has one.
+    public func defaultValues(in tableID: String, now: Date = Date()) -> [String: JSONValue] {
+        var out: [String: JSONValue] = [:]
+        for field in fields(in: tableID) {
+            if let value = resolvedDefaultValue(for: field, now: now) { out[field.id] = value }
+        }
+        return out
     }
 
     public func findRecord(titled title: String, in tableID: String) -> String? {
@@ -158,7 +207,7 @@ extension BaseDocument {
     /// Stored JSON for a resolved value when writing it into `field` (used by type conversion and automations).
     func storedValue(for value: CellValue, text: String, in field: FieldModel, options: FieldOptions) -> JSONValue {
         switch field.type {
-        case .singleLineText, .multilineText, .email, .url, .phoneNumber:
+        case .singleLineText, .multilineText, .email, .url, .phoneNumber, .aiText:
             return text.isEmpty ? .null : .string(text)
         case .number, .currency, .duration:
             if let n = value.numberValue { return .number(n) }
@@ -210,7 +259,15 @@ extension BaseDocument {
         case .attachment:
             if case .attachments(let atts) = value { return JSONValue(encoding: atts) }
             return .null
-        case .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button:
+        case .collaborator:
+            if case .collaborators(let people) = value {
+                return storedCollaborators(people.map(\.id).filter { person($0) != nil }, field: field)
+            }
+            return collaboratorValue(from: text, field: field, createMissing: false)
+        case .barcode:
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? .null : BarcodeValue(text: trimmed).json
+        case .lookup, .rollup, .count, .formula, .createdTime, .lastModifiedTime, .autoNumber, .button, .createdBy, .lastModifiedBy:
             return .null
         }
     }
@@ -252,6 +309,37 @@ extension BaseDocument {
         target.type = newType
         target.options = options
         var mutations: [Mutation] = []
+        if newType == .collaborator {
+            // Names and emails that aren't people yet become people, like new options for selects.
+            var known = people
+            var added = false
+            for (r, v, text) in resolved {
+                var ids: [String] = []
+                if case .collaborators(let current) = v {
+                    ids = current.map(\.id)
+                } else {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let tokens = known.contains(where: { $0.matches(trimmed) })
+                        ? [trimmed]
+                        : trimmed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    for token in tokens {
+                        if let existing = known.first(where: { $0.matches(token) }) {
+                            if !ids.contains(existing.id) { ids.append(existing.id) }
+                            continue
+                        }
+                        let isEmail = token.contains("@") && !token.contains(" ")
+                        let person = Person(name: isEmail ? "" : token, email: isEmail ? token : "", color: .cycling(known.count))
+                        known.append(person)
+                        ids.append(person.id)
+                        added = true
+                    }
+                }
+                let stored = storedCollaborators(ids, field: target)
+                if stored != r[field.id] { mutations.append(Mutation(.record, r.id, [field.id: stored])) }
+            }
+            if added { mutations.append(peopleMutation(known)) }
+            return mutations
+        }
         for (r, v, text) in resolved {
             let stored = storedValue(for: v, text: text, in: target, options: options)
             if stored != r[field.id] {

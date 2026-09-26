@@ -47,13 +47,37 @@ struct TableScreen: View {
                 TableTitle(document: document, tableID: tableID)
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                if view?.type != .form && view?.type != .chart {
-                    Button {
-                        commandTarget.addRecord()
-                    } label: {
-                        Label("Add Record", systemImage: "plus")
+                if let type = view?.type, type != .form && type != .chart && type != .dashboard {
+                    let templates = document.table(tableID)?.recordTemplates ?? []
+                    if templates.isEmpty || view?.type != .grid {
+                        Button {
+                            commandTarget.addRecord()
+                        } label: {
+                            Label("Add Record", systemImage: "plus")
+                        }
+                        .help("Add a record (⇧↩ in the grid)")
+                    } else {
+                        Menu {
+                            Button("Blank Record") { commandTarget.addRecord() }
+                            Section("Templates") {
+                                ForEach(templates) { template in
+                                    Button(template.name) { commandTarget.addRecordFromTemplate(template) }
+                                }
+                            }
+                            Menu("Delete Template") {
+                                ForEach(templates) { template in
+                                    Button(template.name, role: .destructive) {
+                                        document.setTemplates(templates.filter { $0.id != template.id }, in: tableID)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Add Record", systemImage: "plus")
+                        } primaryAction: {
+                            commandTarget.addRecord()
+                        }
+                        .help("Add a record — hold for templates (⇧↩ in the grid)")
                     }
-                    .help("Add a record (⇧↩ in the grid)")
                 }
             }
         }
@@ -63,10 +87,18 @@ struct TableScreen: View {
         .onAppear {
             commandTarget.focusSearch = { searchFocused = true }
             commandTarget.exportCSV = { if let view { exportCSV(view) } }
+            commandTarget.printView = { if let view { printView(view) } }
         }
         .onChange(of: view?.id) { _, _ in
             commandTarget.exportCSV = { if let v = state.currentView(for: tableID, in: document) { exportCSV(v) } }
+            commandTarget.printView = { if let v = state.currentView(for: tableID, in: document) { printView(v) } }
         }
+    }
+
+    private func printView(_ view: ViewModel) {
+        let current = document.view(view.id) ?? view
+        Printing.print(html: document.exportHTML(view: current, collapsed: state.collapsedGroups[view.id] ?? []),
+                       title: "\(document.table(tableID)?.name ?? "Table") - \(current.name)")
     }
 
     private func exportCSV(_ view: ViewModel) {
@@ -150,6 +182,8 @@ struct ViewContent: View {
         switch view.type {
         case .grid:
             GridContainer(session: session, view: view, state: state, commandTarget: commandTarget)
+        case .list:
+            ListView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .kanban:
             KanbanView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .calendar:
@@ -158,10 +192,14 @@ struct ViewContent: View {
             GalleryView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .timeline:
             RoadmapView(session: session, view: view, state: state, commandTarget: commandTarget)
+        case .gantt:
+            GanttView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .form:
             FormView(session: session, view: view, state: state)
         case .chart:
             ChartView(session: session, view: view, state: state)
+        case .dashboard:
+            DashboardView(session: session, view: view, state: state)
         }
     }
 }

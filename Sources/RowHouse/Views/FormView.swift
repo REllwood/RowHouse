@@ -42,12 +42,33 @@ struct FormView: View {
                     .padding(12)
             }
         }
+        .onAppear(perform: applyPrefill)
+        .onChange(of: state.formPrefill[view.id]) { _, _ in applyPrefill() }
     }
 
     private var includedFields: [FieldModel] {
         let all = document.fields(in: view.tableID).filter { $0.isEditable }
         guard let ids = form.fieldIDs else { return all }
         return ids.compactMap { id in all.first { $0.id == id } }
+    }
+
+    /// Fields whose "show only if" conditions hold for the answers so far.
+    private var visibleFields: [FieldModel] {
+        includedFields.filter { f in
+            guard let condition = form.fieldConditions?[f.id], !condition.isEmpty else { return true }
+            return document.matches(draft: draft, tableID: view.tableID, filter: condition)
+        }
+    }
+
+    private func applyPrefill() {
+        guard let prefill = state.formPrefill[view.id] else { return }
+        state.formPrefill[view.id] = nil
+        for (name, text) in prefill {
+            guard let field = document.field(named: name, in: view.tableID) ?? document.field(name), field.tableID == view.tableID, field.isEditable else { continue }
+            let value = document.parseValue(text, for: field, createMissingChoices: false)
+            if !value.isNull { draft[field.id] = value }
+        }
+        submitted = false
     }
 
     private var formCard: some View {
@@ -60,7 +81,7 @@ struct FormView: View {
                     Text(d).font(.title3).foregroundStyle(.secondary)
                 }
             }
-            ForEach(includedFields) { field in
+            ForEach(visibleFields) { field in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 3) {
                         Text(field.name).font(.headline)
@@ -111,9 +132,12 @@ struct FormView: View {
 
     private func submit() {
         let required = Set(form.requiredFieldIDs ?? [])
-        missing = Set(includedFields.filter { required.contains($0.id) && (draft[$0.id]?.isEmptyCell ?? true) && !(draft[$0.id]?.boolValue ?? false) }.map(\.id))
+        let shown = visibleFields
+        let shownIDs = Set(shown.map(\.id))
+        missing = Set(shown.filter { required.contains($0.id) && (draft[$0.id]?.isEmptyCell ?? true) && !(draft[$0.id]?.boolValue ?? false) }.map(\.id))
         guard missing.isEmpty else { return }
-        let values = draft.filter { !$0.value.isNull }
+        // Answers to questions that ended up hidden aren't saved.
+        let values = draft.filter { !$0.value.isNull && shownIDs.contains($0.key) }
         let id = document.createRecord(in: view.tableID, values: values)
         app.engine(session.id)?.formSubmitted(viewID: view.id, recordID: id)
         submitted = true
@@ -152,6 +176,7 @@ private struct FormBuilder: View {
                             Image(systemName: f.type.symbolName).frame(width: 16).foregroundStyle(.secondary)
                             Text(f.name).lineLimit(1)
                             Spacer()
+                            FieldConditionButton(document: document, view: view, fieldID: id)
                             Toggle("Required", isOn: Binding(get: { required.contains(id) }, set: { on in
                                 update { form in
                                     var set = Set(form.requiredFieldIDs ?? [])
@@ -186,6 +211,16 @@ private struct FormBuilder: View {
                 Text("Submissions create records in \(document.table(view.tableID)?.name ?? "this table") and can trigger automations.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString("rowhouse://form?base=\(document.baseID)&view=\(view.id)", forType: .string)
+                } label: {
+                    Label("Copy form link", systemImage: "link")
+                }
+                .controlSize(.small)
+                Text("Add prefill_<Field name>=value to the link to pre-fill answers, e.g. &prefill_Priority=High.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             .padding(16)
         }
@@ -212,5 +247,41 @@ private struct FormBuilder: View {
         guard let i = ids.firstIndex(of: id), i + delta >= 0, i + delta < ids.count else { return }
         ids.swapAt(i, i + delta)
         update { $0.fieldIDs = ids }
+    }
+}
+
+/// "Show only if…" conditions for one form field.
+private struct FieldConditionButton: View {
+    let document: BaseDocument
+    let view: ViewModel
+    let fieldID: String
+    @State private var editing = false
+
+    var body: some View {
+        let condition = view.config.form?.fieldConditions?[fieldID]
+        let active = !(condition?.isEmpty ?? true)
+        Button {
+            editing = true
+        } label: {
+            Image(systemName: active ? "eye.circle.fill" : "eye.circle")
+                .foregroundStyle(active ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(active ? "Shown only when conditions are met" : "Show this field only when…")
+        .popover(isPresented: $editing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Show this field only when").font(.headline)
+                FilterEditor(document: document, tableID: view.tableID, filter: condition ?? FilterGroup(), title: "") { group in
+                    document.updateViewConfig(view.id, actionName: "Edit Form") { config in
+                        var form = config.form ?? FormConfig()
+                        var conditions = form.fieldConditions ?? [:]
+                        conditions[fieldID] = group.isEmpty ? nil : group
+                        form.fieldConditions = conditions.isEmpty ? nil : conditions
+                        config.form = form
+                    }
+                }
+            }
+            .padding(14)
+        }
     }
 }

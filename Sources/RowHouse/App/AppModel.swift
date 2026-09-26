@@ -18,6 +18,7 @@ final class AppModel {
     var alert: AppAlert?
 
     @ObservationIgnored private let services = SystemAutomationServices()
+    @ObservationIgnored private var mentionObservers: [String: UUID] = [:]
 
     private init() {
         library = Library()
@@ -67,11 +68,37 @@ final class AppModel {
                 sessions[entry.baseID] = session
                 loadErrors[entry.baseID] = nil
                 then?(session)
-                engines[entry.baseID] = AutomationEngine(session: session, services: services)
+                startServices(for: session)
             } catch {
                 loadErrors[entry.baseID] = error.localizedDescription
             }
             loading.remove(entry.baseID)
+        }
+    }
+
+    /// Starts a base's automations and watches for comments that @mention you from other Macs.
+    private func startServices(for session: BaseSession) {
+        engines[session.id] = AutomationEngine(session: session, services: services)
+        session.document.currentPersonID = Me.personID(in: session.id)
+        if let old = mentionObservers[session.id] { session.document.removeObserver(old) }
+        mentionObservers[session.id] = session.document.addObserver { [weak self, weak session] changes in
+            guard changes.origin.isRemote, !changes.createdComments.isEmpty, let self, let session else { return }
+            self.notifyMentions(changes.createdComments, in: session)
+        }
+    }
+
+    private func notifyMentions(_ commentIDs: [String], in session: BaseSession) {
+        guard let me = Me.personID(in: session.id) else { return }
+        let doc = session.document
+        for id in commentIDs {
+            guard let comment = doc.comment(id), comment.mentions.contains(me), comment.authorDeviceID != doc.deviceID,
+                  comment.createdTime > Date().addingTimeInterval(-7 * 86_400),
+                  let record = doc.record(comment.recordID) else { continue }
+            let title = doc.primaryTitle(record)
+            let link = "rowhouse://record?base=\(doc.baseID)&table=\(record.tableID)&record=\(record.id)"
+            Task {
+                await MentionNotifier.post(title: "\(comment.authorName) mentioned you", subtitle: "\(title.isEmpty ? "Unnamed record" : title) · \(doc.info.name)", body: comment.text, link: link)
+            }
         }
     }
 
@@ -88,7 +115,7 @@ final class AppModel {
             session.document.apply(template: template, storage: session.storage)
             session.writeSnapshotNow()
             sessions[entry.baseID] = session
-            engines[entry.baseID] = AutomationEngine(session: session, services: services)
+            startServices(for: session)
             return entry.baseID
         } catch {
             alert = AppAlert(title: "Couldn't create the base", message: error.localizedDescription)
@@ -113,9 +140,7 @@ final class AppModel {
     /// Starts automations for a base created by an importer, once it has been filled.
     func finishImport(_ session: BaseSession) {
         session.writeSnapshotNow()
-        if engines[session.id] == nil {
-            engines[session.id] = AutomationEngine(session: session, services: services)
-        }
+        if engines[session.id] == nil { startServices(for: session) }
     }
 
     /// Creates a base holding one table imported from CSV.
@@ -135,7 +160,7 @@ final class AppModel {
             doc.undoManager = manager
             session.writeSnapshotNow()
             sessions[entry.baseID] = session
-            engines[entry.baseID] = AutomationEngine(session: session, services: services)
+            startServices(for: session)
             return entry.baseID
         } catch {
             alert = AppAlert(title: "Couldn't import the CSV", message: error.localizedDescription)
@@ -155,6 +180,67 @@ final class AppModel {
             alert = AppAlert(title: "Couldn't move the base to the Trash", message: error.localizedDescription)
         }
         syncSessions()
+    }
+
+    /// Copies a base (with attachments) as a new base.
+    func duplicateBase(_ baseID: String) async -> String? {
+        guard let source = sessions[baseID], let entry = library.entries.first(where: { $0.baseID == baseID }) else { return nil }
+        source.storage.flush()
+        do {
+            let name = source.document.info.name + " copy"
+            let copy = try library.duplicate(entry, state: source.document.state, name: name, deviceID: identity.id)
+            loading.insert(copy.baseID)
+            defer { loading.remove(copy.baseID) }
+            let session = try await BaseSession.open(entry: copy, identity: identity)
+            let manager = session.document.undoManager
+            session.document.undoManager = nil
+            session.document.updateBaseInfo(name: name)
+            // Automations in the copy start switched off so nothing fires twice.
+            for automation in session.document.automations where automation.enabled {
+                session.document.updateAutomation(automation.id) { $0.enabled = false }
+            }
+            session.document.undoManager = manager
+            sessions[copy.baseID] = session
+            engines[copy.baseID] = AutomationEngine(session: session, services: services)
+            return copy.baseID
+        } catch {
+            alert = AppAlert(title: "Couldn't duplicate the base", message: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func exportBackup(_ baseID: String) {
+        guard let session = sessions[baseID], let entry = library.entries.first(where: { $0.baseID == baseID }) else { return }
+        session.writeSnapshotNow()
+        session.storage.flush()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.zip]
+        panel.nameFieldStringValue = "\(session.document.info.name) \(Date().formatted(.iso8601.year().month().day())).zip"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Library.exportBackup(of: entry.url, to: url)
+        } catch {
+            alert = AppAlert(title: "Couldn't export the backup", message: error.localizedDescription)
+        }
+    }
+
+    func importBackup() async -> String? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.zip]
+        panel.message = "Choose a RowHouse backup (.zip)"
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        do {
+            let entry = try library.importBackup(from: url)
+            loading.insert(entry.baseID)
+            defer { loading.remove(entry.baseID) }
+            let session = try await BaseSession.open(entry: entry, identity: identity)
+            sessions[entry.baseID] = session
+            startServices(for: session)
+            return entry.baseID
+        } catch {
+            alert = AppAlert(title: "Couldn't restore the backup", message: error.localizedDescription)
+            return nil
+        }
     }
 
     func revealInFinder(_ baseID: String) {
@@ -214,9 +300,18 @@ final class WindowState {
     var expandedRecord: ExpandedRecord?
     var showViewsList = true
     var collapsedGroups: [String: Set<String>] = [:]
+    var listExpansion: [String: ListExpansion] = [:]
     var newBaseSheet = false
     var csvImportSheet = false
     var airtableImportSheet = false
+    var trashBase: BaseSheetTarget?
+    var scriptBase: BaseSheetTarget?
+    var findReplaceTable: BaseSheetTarget?
+    var duplicatesTable: BaseSheetTarget?
+    var showShortcuts = false
+    var searchBase: BaseSheetTarget?
+    /// Values to pre-fill in a form view, from a rowhouse://form link (view id → field name → text).
+    var formPrefill: [String: [String: String]] = [:]
 
     init() {
         let d = UserDefaults.standard
@@ -244,6 +339,12 @@ final class WindowState {
         if let id = viewForTable[tableID], let v = views.first(where: { $0.id == id }) { return v }
         return views.first
     }
+}
+
+struct BaseSheetTarget: Identifiable, Hashable {
+    var baseID: String
+    var tableID: String?
+    var id: String { baseID + (tableID ?? "") }
 }
 
 struct ExpandedRecord: Identifiable, Hashable {

@@ -27,6 +27,27 @@ struct MainWindow: View {
         .sheet(isPresented: $state.airtableImportSheet) {
             AirtableImportSheet(state: state)
         }
+        .sheet(item: $state.trashBase) { target in
+            if let session = app.session(target.baseID) { TrashSheet(session: session) }
+        }
+        .sheet(item: $state.scriptBase) { target in
+            if let session = app.session(target.baseID) { ScriptConsoleSheet(session: session) }
+        }
+        .sheet(item: $state.searchBase) { target in
+            if let session = app.session(target.baseID) { BaseSearchSheet(session: session, state: state) }
+        }
+        .sheet(item: $state.findReplaceTable) { target in
+            if let session = app.session(target.baseID), let tableID = target.tableID {
+                let view = state.currentView(for: tableID, in: session.document)
+                FindReplaceSheet(session: session, tableID: tableID, viewRecordIDs: view.map { session.document.evaluate(view: $0).recordIDs } ?? [])
+            }
+        }
+        .sheet(isPresented: $state.showShortcuts) { ShortcutsSheet() }
+        .sheet(item: $state.duplicatesTable) { target in
+            if let session = app.session(target.baseID), let tableID = target.tableID {
+                DuplicatesSheet(session: session, tableID: tableID, state: state)
+            }
+        }
         .sheet(item: $state.expandedRecord) { expanded in
             if let session = app.session(expanded.baseID) {
                 RecordDetailSheet(session: session, expanded: expanded, state: state)
@@ -81,8 +102,8 @@ struct MainWindow: View {
         }
     }
 
-    /// rowhouse://record?base=…&table=…&record=…, rowhouse://open?base=…&table=…&view=…
-    /// and rowhouse://automations?base=…
+    /// rowhouse://record?base=…&table=…&record=…, rowhouse://open?base=…&table=…&view=…,
+    /// rowhouse://automations?base=… and rowhouse://form?base=…&view=…&prefill_<Field>=…
     private func handleDeepLink(_ url: URL) {
         guard url.scheme == "rowhouse", let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let q = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
@@ -94,6 +115,16 @@ struct MainWindow: View {
         }
         if url.host == "automations" {
             state.destination = .automations(base: base)
+            return
+        }
+        if url.host == "form", let viewID = q["view"], let view = session.document.view(viewID) {
+            var prefill: [String: String] = [:]
+            for item in comps.queryItems ?? [] where item.name.hasPrefix("prefill_") {
+                prefill[String(item.name.dropFirst("prefill_".count))] = item.value ?? ""
+            }
+            state.formPrefill[viewID] = prefill
+            state.viewForTable[view.tableID] = viewID
+            state.destination = .table(base: base, table: view.tableID)
             return
         }
         let table = q["table"] ?? session.document.tables.first?.id

@@ -24,14 +24,17 @@ extension BaseDocument {
     }
 
     /// Records this device's name so other devices can show who made changes. Not undoable.
-    public func registerDevice() {
+    /// `kind` is nil for a Mac and `DeviceInfo.agentKind` for an AI assistant.
+    public func registerDevice(kind: String? = nil) {
         let existing = hasDevice(deviceID)
         let stale = existing.map { Date().timeIntervalSince($0.lastSeen) > 86_400 } ?? true
-        guard existing?.name != deviceName || stale else { return }
-        commit([Mutation(.device, deviceID, [
+        guard existing?.name != deviceName || existing?.kind != kind || stale else { return }
+        var set: [String: JSONValue] = [
             "name": .string(deviceName),
             "lastSeen": .number(Date().timeIntervalSince1970 * 1000),
-        ])], undoable: false)
+        ]
+        if let kind { set["kind"] = .string(kind) }
+        commit([Mutation(.device, deviceID, set)], undoable: false)
     }
 
     // MARK: - Tables
@@ -123,6 +126,11 @@ extension BaseDocument {
                 for (old, new) in fieldMap { formula = formula.replacingOccurrences(of: "{\(old)}", with: "{\(new)}") }
                 options.formula = formula
             }
+            if var prompt = options.aiPrompt {
+                for (old, new) in fieldMap { prompt = prompt.replacingOccurrences(of: "{\(old)}", with: "{\(new)}") }
+                options.aiPrompt = prompt
+            }
+            options.watchedFieldIDs = options.watchedFieldIDs?.compactMap { fieldMap[$0] }
             mutations.append(fieldMutation(id: fieldMap[f.id]!, tableID: newTableID, name: f.name, type: type, options: options, order: f.order, description: f.description))
         }
         for v in views(in: id) {
@@ -148,6 +156,30 @@ extension BaseDocument {
         }
         commit(mutations, actionName: "Duplicate Table")
         return newTableID
+    }
+
+    /// Saves a record's editable values as a template for new records in its table.
+    @discardableResult
+    public func saveTemplate(named name: String, from recordID: String) -> RecordTemplate? {
+        guard let r = record(recordID), let table = table(r.tableID) else { return nil }
+        var values: [String: JSONValue] = [:]
+        for f in fields(in: r.tableID) where f.isEditable && !f.isInverseLink {
+            if let v = r.cells[f.id], !v.isEmptyCell { values[f.id] = v }
+        }
+        let template = RecordTemplate(name: name.isEmpty ? "Template" : name, values: values)
+        setTemplates(table.recordTemplates + [template], in: table.id)
+        return template
+    }
+
+    public func setTemplates(_ templates: [RecordTemplate], in tableID: String) {
+        commit([Mutation(.table, tableID, ["recordTemplates": JSONValue(encoding: templates)])], actionName: "Edit Record Templates")
+    }
+
+    /// Creates a record from a template; values for fields that no longer exist are skipped.
+    @discardableResult
+    public func createRecord(from template: RecordTemplate, in tableID: String, after afterID: String? = nil) -> String {
+        let values = template.values.filter { key, _ in field(key).map { $0.tableID == tableID && $0.isEditable } ?? false }
+        return createRecord(in: tableID, values: values, after: afterID)
     }
 
     public func uniqueTableName(_ base: String) -> String {
@@ -217,6 +249,8 @@ extension BaseDocument {
         if let description { set["description"] = .string(description) }
         let targetType = newType ?? field.type
         var options = newOptions ?? field.options
+        // A default value belongs to the type it was chosen for.
+        if targetType != field.type, options.defaultValue == field.options.defaultValue { options.defaultValue = nil }
         options = normalizedOptions(options, for: targetType, tableID: field.tableID)
 
         if targetType != field.type || newOptions != nil {
@@ -357,9 +391,13 @@ extension BaseDocument {
             if o.buttonAction == nil { o.buttonAction = .openURL }
         case .formula:
             if let formula = o.formula { o.formula = formulaWithFieldIDs(formula, tableID: tableID) }
+        case .aiText:
+            if let prompt = o.aiPrompt { o.aiPrompt = aiPromptWithFieldIDs(prompt, tableID: tableID) }
+            if o.aiModel?.trimmingCharacters(in: .whitespaces).isEmpty == true { o.aiModel = nil }
         default:
             break
         }
+        if !type.supportsDefaultValue || o.defaultValue?.isNull == true { o.defaultValue = nil }
         if type == .button, let formula = o.buttonURLFormula { o.buttonURLFormula = formulaWithFieldIDs(formula, tableID: tableID) }
         return o
     }
@@ -377,10 +415,15 @@ extension BaseDocument {
             config.coverFieldID = fields.first { $0.type == .attachment }?.id
         case .gallery:
             config.coverFieldID = fields.first { $0.type == .attachment }?.id
-        case .calendar, .timeline:
+        case .calendar, .timeline, .gantt:
             let dates = fields.filter { $0.type == .date }
             config.dateFieldID = dates.first?.id ?? fields.first { $0.type.isDateLike }?.id
-            if type == .timeline { config.endDateFieldID = dates.dropFirst().first?.id }
+            if type != .calendar { config.endDateFieldID = dates.dropFirst().first?.id }
+            if type == .gantt { config.dependencyFieldID = fields.first { $0.type == .link && $0.options.linkedTableID == tableID }?.id }
+        case .list:
+            config.listChildLinkFieldID = fields.first { $0.type == .link && $0.options.linkedTableID == tableID }?.id
+        case .dashboard:
+            config.dashboard = DashboardConfig.starter(tableName: table(tableID)?.name ?? "Records", fields: fields, primaryFieldID: primaryField(of: tableID)?.id)
         case .form:
             var form = FormConfig()
             form.title = table(tableID)?.name
@@ -423,6 +466,12 @@ extension BaseDocument {
         var config = view.config
         update(&config)
         guard config != view.config else { return }
+        if view.config.isLocked {
+            // Only unlocking is allowed on a locked view.
+            var otherChanges = config
+            otherChanges.locked = view.config.locked
+            guard otherChanges == view.config else { return }
+        }
         commit([Mutation(.view, id, ["config": JSONValue(encoding: config)])], actionName: actionName)
     }
 
@@ -450,14 +499,15 @@ extension BaseDocument {
     // MARK: - Records
 
     /// Creates a record. `values` maps field ids to stored JSON; edits to inverse link fields are
-    /// translated onto the owning side.
+    /// translated onto the owning side. Fields missing from `values` get their default value unless
+    /// `applyingDefaults` is false.
     @discardableResult
-    public func createRecord(in tableID: String, values: [String: JSONValue] = [:], after afterID: String? = nil, origin: ChangeOrigin = .local) -> String {
-        createRecords(in: tableID, values: [values], after: afterID, origin: origin).first ?? ""
+    public func createRecord(in tableID: String, values: [String: JSONValue] = [:], after afterID: String? = nil, origin: ChangeOrigin = .local, applyingDefaults: Bool = true) -> String {
+        createRecords(in: tableID, values: [values], after: afterID, origin: origin, applyingDefaults: applyingDefaults).first ?? ""
     }
 
     @discardableResult
-    public func createRecords(in tableID: String, values: [[String: JSONValue]], after afterID: String? = nil, origin: ChangeOrigin = .local) -> [String] {
+    public func createRecords(in tableID: String, values: [[String: JSONValue]], after afterID: String? = nil, origin: ChangeOrigin = .local, applyingDefaults: Bool = true) -> [String] {
         let existing = records(in: tableID)
         var start = (existing.last?.order ?? 0) + 1
         var step = 1.0
@@ -467,7 +517,9 @@ extension BaseDocument {
             step = (upper - lower) / Double(values.count + 1)
             start = lower + step
         }
-        let now = Date().timeIntervalSince1970 * 1000
+        let date = Date()
+        let now = date.timeIntervalSince1970 * 1000
+        let defaults = applyingDefaults ? defaultValues(in: tableID, now: date) : [:]
         var ids: [String] = []
         var mutations: [Mutation] = []
         var work = InverseLinkWork()
@@ -480,6 +532,8 @@ extension BaseDocument {
                 "_created": .number(now),
                 "_deleted": .bool(false),
             ]
+            var vals = vals
+            for (fieldID, value) in defaults where vals[fieldID] == nil { vals[fieldID] = value }
             set.merge(splitInverseLinkWrites(recordID: id, values: vals, isNew: true, work: &work)) { _, new in new }
             mutations.append(Mutation(.record, id, set))
         }
@@ -520,7 +574,7 @@ extension BaseDocument {
                     let linked = compute.linkedRecordIDs(record: r, field: f)
                     if !linked.isEmpty { values[f.id] = .array(linked.map(JSONValue.string)) }
                 }
-                newIDs.append(createRecord(in: r.tableID, values: values, after: id))
+                newIDs.append(createRecord(in: r.tableID, values: values, after: id, applyingDefaults: false))
             }
         }
         return newIDs
@@ -537,7 +591,13 @@ extension BaseDocument {
     public func setCell(recordID: String, fieldID: String, text: String, origin: ChangeOrigin = .local) {
         guard let field = field(fieldID), field.isEditable else { return }
         batch("Edit Cell", origin: origin) {
-            let value = parseValue(text, for: field, createMissingChoices: true)
+            var value = parseValue(text, for: field, createMissingChoices: true)
+            // Retyping a barcode's text keeps its symbology.
+            if field.type == .barcode, var edited = BarcodeValue(json: value),
+               let existing = record(recordID).flatMap({ BarcodeValue(json: $0[fieldID]) }) {
+                edited.type = existing.type
+                value = edited.json
+            }
             updateRecord(recordID, values: [fieldID: value], actionName: "Edit Cell", origin: origin)
         }
     }
@@ -604,17 +664,56 @@ extension BaseDocument {
 
     // MARK: - Comments
 
-    public func addComment(to recordID: String, text: String) {
+    /// Adds a comment and returns its id (nil when the text is empty).
+    @discardableResult
+    public func addComment(to recordID: String, text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        commit([Mutation(.comment, RowID.comment(), [
+        guard !trimmed.isEmpty else { return nil }
+        let id = RowID.comment()
+        var set: [String: JSONValue] = [
             "record": .string(recordID),
             "text": .string(trimmed),
             "author": .string(deviceID),
             "authorName": .string(deviceName),
             "created": .number(Date().timeIntervalSince1970 * 1000),
             "_deleted": .bool(false),
-        ])], actionName: "Add Comment")
+        ]
+        let mentioned = mentionedPeople(in: trimmed)
+        if !mentioned.isEmpty { set["mentions"] = .array(mentioned.map { .string($0.id) }) }
+        commit([Mutation(.comment, id, set)], actionName: "Add Comment")
+        return id
+    }
+
+    /// People named with "@Name" in `text`, matching the longest collaborator name (ignoring case).
+    public func mentionedPeople(in text: String) -> [Person] {
+        var seen: Set<String> = []
+        return mentionRanges(in: text).map(\.person).filter { seen.insert($0.id).inserted }
+    }
+
+    /// Where each @mention sits in `text`, for highlighting.
+    public func mentionRanges(in text: String) -> [(range: Range<String.Index>, person: Person)] {
+        let candidates = people.filter { !$0.displayName.isEmpty }.sorted { $0.displayName.count > $1.displayName.count }
+        guard !candidates.isEmpty else { return [] }
+        var found: [(Range<String.Index>, Person)] = []
+        var index = text.startIndex
+        while let at = text[index...].firstIndex(of: "@") {
+            let start = text.index(after: at)
+            let precededByWord = at > text.startIndex && (text[text.index(before: at)].isLetter || text[text.index(before: at)].isNumber)
+            var matched = false
+            if !precededByWord {
+                for person in candidates {
+                    guard let end = text.index(start, offsetBy: person.displayName.count, limitedBy: text.endIndex),
+                          text[start..<end].caseInsensitiveCompare(person.displayName) == .orderedSame else { continue }
+                    if end < text.endIndex, text[end].isLetter || text[end].isNumber { continue }
+                    found.append((at..<end, person))
+                    index = end
+                    matched = true
+                    break
+                }
+            }
+            if !matched { index = start }
+        }
+        return found
     }
 
     public func deleteComment(_ id: String) {
@@ -666,7 +765,9 @@ extension BaseDocument {
             copy.id = RowID.action()
             return copy
         }
-        return createAutomation(name: a.name + " copy", trigger: a.trigger, actions: actions, enabled: false)
+        var trigger = a.trigger
+        if trigger.kind == .webhookReceived { trigger.webhookToken = Webhooks.makeToken() }
+        return createAutomation(name: a.name + " copy", trigger: trigger, actions: actions, enabled: false)
     }
 
     // MARK: - Helpers
@@ -712,16 +813,41 @@ extension ViewConfig {
         dateFieldID = m(dateFieldID)
         endDateFieldID = m(endDateFieldID)
         colorFieldID = m(colorFieldID)
+        colorRules = colorRules?.map { rule in
+            var rule = rule
+            rule.filter = rule.filter.remapped(map)
+            return rule
+        }
         if var f = form {
             f.fieldIDs = f.fieldIDs?.compactMap { map[$0] }
             f.requiredFieldIDs = f.requiredFieldIDs?.compactMap { map[$0] }
             form = f
         }
         if var c = chart {
-            c.categoryFieldID = m(c.categoryFieldID)
-            c.valueFieldID = m(c.valueFieldID)
+            c.remap(map)
             chart = c
         }
+        listChildLinkFieldID = m(listChildLinkFieldID)
+        dependencyFieldID = m(dependencyFieldID)
+        if var d = dashboard {
+            d.widgets = d.widgets.map { widget in
+                var w = widget
+                w.filter = w.filter?.remapped(map)
+                w.fieldID = m(w.fieldID)
+                w.chart?.remap(map)
+                w.sort = w.sort.map { SortSpec(id: $0.id, fieldID: map[$0.fieldID] ?? $0.fieldID, ascending: $0.ascending) }
+                w.fieldIDs = w.fieldIDs?.compactMap { map[$0] }
+                return w
+            }
+            dashboard = d
+        }
+    }
+}
+
+extension ChartConfig {
+    mutating func remap(_ map: [String: String]) {
+        categoryFieldID = categoryFieldID.flatMap { map[$0] ?? $0 }
+        valueFieldID = valueFieldID.flatMap { map[$0] ?? $0 }
     }
 }
 
