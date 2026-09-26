@@ -266,10 +266,10 @@ public final class MCPServer {
         - Bases, tables, fields, views and records can be given by id or by name (names are case-insensitive).
         - list_records pages with max_records/offset and can apply a view, filter_formula, search and sort. search_records looks for text across a whole base.
         - Record values are JSON keyed by field name: text as strings, numbers as numbers (percent as a fraction, 0.5 = 50%; durations in seconds), checkboxes as true/false, single select as the option name, multiple select as an array of names, dates as "YYYY-MM-DD" or ISO-8601 date-times, links as arrays of record ids or primary field values. describe_field_types gives the exact format of every type and the options create_field accepts.
-        - Computed fields (formula, lookup, rollup, count, created/last modified time, autonumber, button) and attachments are read-only.
+        - Computed fields (formula, lookup, rollup, count, created/last modified time, created/last modified by, autonumber, button) and attachments are read-only. Collaborator fields take a person's name, email or id.
         - filter_formula uses Airtable formula syntax, e.g. AND({Status} = "Done", {Due} < TODAY()). Records where it is truthy are returned.
         - create_records and update_records take up to 100 records per call; update_records only changes the fields you pass. Unknown select options are an error unless typecast is true, which adds them.
 
-        Changes are written straight to the base's files. They appear in the RowHouse app within a second and on the user's other Macs through iCloud Drive, attributed to this assistant. There is no undo from here, so confirm with the user before deleting records or making large changes. Edits made here don't trigger the base's record automations.
+        Changes are written straight to the base's files. They appear in the RowHouse app within a second and on the user's other Macs through iCloud Drive, attributed to this assistant. There is no undo from here, so confirm with the user before deleting records or making large changes. The base's record automations run for these edits on its automation host Mac while the RowHouse app is open there.
         """
 }
