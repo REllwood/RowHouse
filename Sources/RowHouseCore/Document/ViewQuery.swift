@@ -95,7 +95,7 @@ extension BaseDocument {
             }
         }
 
-        let groups = (view.type == .grid ? (view.config.groups ?? []) : []).filter { field($0.fieldID) != nil }
+        let groups = (view.type.supportsGrouping ? (view.config.groups ?? []) : []).filter { field($0.fieldID) != nil }
         let sorts = (view.config.sorts ?? []).filter { field($0.fieldID) != nil }
         let keys = groups + sorts
         if !keys.isEmpty {

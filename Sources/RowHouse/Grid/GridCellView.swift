@@ -284,8 +284,10 @@ final class RowNumberCellView: NSView {
     var hovering = false { didSet { if oldValue != hovering { needsDisplay = true } } }
     var rowSelected = false { didSet { if oldValue != rowSelected { needsDisplay = true } } }
     var commentCount = 0
-    /// Record colour from the view's colour settings, drawn as a bar on the leading edge.
-    var accent: ChoiceColor? { didSet { if oldValue != accent { needsDisplay = true } } }
+    /// The record's colour (from the view's colour field), drawn as a bar on the leading edge.
+    var accent: NSColor? { didSet { if oldValue != accent { needsDisplay = true } } }
+    /// Shows a grip instead of the number on hover when rows can be dragged to reorder.
+    var draggable = false
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -294,16 +296,23 @@ final class RowNumberCellView: NSView {
             bounds.fill()
         }
         if let accent {
-            Theme.solid(accent).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 2, y: 3, width: 4, height: bounds.height - 6), xRadius: 2, yRadius: 2).fill()
+            accent.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 2, y: 3, width: 4, height: max(0, bounds.height - 7)), xRadius: 2, yRadius: 2).fill()
         }
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: NSColor.tertiaryLabelColor,
-        ]
-        let str = NSAttributedString(string: "\(number)", attributes: attrs)
-        let size = str.size()
-        str.draw(at: NSPoint(x: 10, y: min(bounds.midY - size.height / 2, 9)))
+        if hovering && draggable,
+           let grip = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: "Drag to reorder")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [.tertiaryLabelColor]))) {
+            let s = grip.size
+            grip.draw(in: NSRect(x: 11, y: min(bounds.midY - s.height / 2, 16 - s.height / 2), width: s.width, height: s.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        } else {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let str = NSAttributedString(string: "\(number)", attributes: attrs)
+            let size = str.size()
+            str.draw(at: NSPoint(x: 10, y: min(bounds.midY - size.height / 2, 9)))
+        }
         if hovering || rowSelected {
             if let img = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Expand record")?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [.controlAccentColor]))) {

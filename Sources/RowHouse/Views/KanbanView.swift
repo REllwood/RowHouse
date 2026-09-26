@@ -55,26 +55,107 @@ struct KanbanView: View {
             buckets[key, default: []].append(r)
         }
         let cardFields = document.cardFields(for: view, excluding: [stackField.id, view.config.coverFieldID ?? ""], limit: 4)
-        let stacks: [SelectChoice?] = [nil] + stackField.choices.map { Optional($0) }
+        let hideEmpty = view.config.hideEmptyStacks == true
+        let collapsed = Set(view.config.collapsedStacks ?? [])
+        let stacks: [SelectChoice?] = ([nil] + stackField.choices.map { Optional($0) }).filter { choice in
+            let count = buckets[choice?.id ?? ""]?.count ?? 0
+            return count > 0 || (choice != nil && !hideEmpty)
+        }
         return ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 14) {
-                ForEach(stacks.filter { $0 != nil || !(buckets[""] ?? []).isEmpty }, id: \.?.id) { choice in
-                    KanbanColumn(
-                        session: session,
-                        view: view,
-                        stackField: stackField,
-                        choice: choice,
-                        records: buckets[choice?.id ?? ""] ?? [],
-                        cardFields: cardFields,
-                        state: state,
-                        siblings: result.recordIDs
-                    )
+                ForEach(stacks, id: \.?.id) { choice in
+                    let key = choice?.id ?? ""
+                    if collapsed.contains(key) {
+                        CollapsedKanbanColumn(document: document, stackField: stackField, choice: choice, count: buckets[key]?.count ?? 0) {
+                            setCollapsed(key, false)
+                        }
+                    } else {
+                        KanbanColumn(
+                            session: session,
+                            view: view,
+                            stackField: stackField,
+                            choice: choice,
+                            records: buckets[key] ?? [],
+                            cardFields: cardFields,
+                            state: state,
+                            siblings: result.recordIDs,
+                            collapse: { setCollapsed(key, true) }
+                        )
+                    }
                 }
                 AddStackButton(document: document, fieldID: stackField.id)
             }
             .padding(16)
+            .animation(.snappy(duration: 0.2), value: collapsed)
         }
         .background(Color.primary.opacity(0.025))
+    }
+
+    private func setCollapsed(_ key: String, _ collapse: Bool) {
+        document.updateViewConfig(view.id, actionName: collapse ? "Collapse Stack" : "Expand Stack") { config in
+            var keys = config.collapsedStacks ?? []
+            keys.removeAll { $0 == key }
+            if collapse { keys.append(key) }
+            config.collapsedStacks = keys.isEmpty ? nil : keys
+        }
+    }
+}
+
+/// Moves dropped cards into a stack.
+@MainActor
+private func moveCards(_ ids: [String], to choice: SelectChoice?, stackField: FieldModel, document: BaseDocument) -> Bool {
+    var updates: [String: [String: JSONValue]] = [:]
+    for id in ids where document.record(id) != nil {
+        updates[id] = [stackField.id: choice.map { .string($0.id) } ?? .null]
+    }
+    document.updateRecords(updates, actionName: "Move Card")
+    return !updates.isEmpty
+}
+
+/// A collapsed stack: a thin strip with its name and count that still accepts dropped cards.
+private struct CollapsedKanbanColumn: View {
+    let document: BaseDocument
+    let stackField: FieldModel
+    let choice: SelectChoice?
+    let count: Int
+    let expand: () -> Void
+    @State private var targeted = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "arrow.left.and.line.vertical.and.arrow.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("\(count)")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+            Group {
+                if let choice {
+                    ChoiceChip(name: choice.name, color: choice.color)
+                } else {
+                    Text("Uncategorized").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                }
+            }
+            .fixedSize()
+            .rotationEffect(.degrees(90))
+            .frame(width: 24, height: 140, alignment: .center)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 12)
+        .frame(width: 44)
+        .frame(minHeight: 240, maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 12).fill(targeted ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.035)))
+        .overlay(alignment: .top) {
+            if let choice {
+                Capsule().fill(choice.color.swiftUI).frame(width: 18, height: 3).padding(.top, 4)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: expand)
+        .help("Expand \(choice?.name ?? "Uncategorized")")
+        .dropDestination(for: String.self) { ids, _ in
+            moveCards(ids, to: choice, stackField: stackField, document: document)
+        } isTargeted: { targeted = $0 }
     }
 }
 
@@ -87,6 +168,7 @@ private struct KanbanColumn: View {
     let cardFields: [FieldModel]
     var state: WindowState
     let siblings: [String]
+    let collapse: () -> Void
     @State private var targeted = false
 
     var body: some View {
@@ -100,6 +182,12 @@ private struct KanbanColumn: View {
                 }
                 Text("\(records.count)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 Spacer()
+                Button(action: collapse) {
+                    Image(systemName: "arrow.right.and.line.vertical.and.arrow.left")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Collapse this stack")
                 Button {
                     let values: [String: JSONValue] = choice.map { [stackField.id: .string($0.id)] } ?? [:]
                     let id = document.createRecord(in: view.tableID, values: values)
@@ -138,12 +226,7 @@ private struct KanbanColumn: View {
         .frame(width: 280)
         .background(RoundedRectangle(cornerRadius: 12).fill(targeted ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.035)))
         .dropDestination(for: String.self) { ids, _ in
-            var updates: [String: [String: JSONValue]] = [:]
-            for id in ids where document.record(id) != nil {
-                updates[id] = [stackField.id: choice.map { .string($0.id) } ?? .null]
-            }
-            document.updateRecords(updates, actionName: "Move Card")
-            return !updates.isEmpty
+            moveCards(ids, to: choice, stackField: stackField, document: document)
         } isTargeted: { targeted = $0 }
     }
 }

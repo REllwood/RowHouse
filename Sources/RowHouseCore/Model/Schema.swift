@@ -145,31 +145,45 @@ public struct AttachmentInfo: Codable, Hashable, Sendable, Identifiable {
 // MARK: - Views
 
 public enum ViewType: String, Codable, CaseIterable, Sendable, Identifiable {
-    case grid, kanban, calendar, gallery, timeline, form, chart
+    case grid, list, kanban, calendar, gallery, timeline, gantt, form, chart, dashboard
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .grid: "Grid"
+        case .list: "List"
         case .kanban: "Kanban"
         case .calendar: "Calendar"
         case .gallery: "Gallery"
         case .timeline: "Timeline"
+        case .gantt: "Gantt"
         case .form: "Form"
         case .chart: "Chart"
+        case .dashboard: "Dashboard"
         }
     }
 
     public var symbolName: String {
         switch self {
         case .grid: "tablecells"
+        case .list: "list.bullet.indent"
         case .kanban: "rectangle.split.3x1"
         case .calendar: "calendar"
         case .gallery: "square.grid.2x2"
         case .timeline: "chart.bar.xaxis"
+        case .gantt: "chart.bar.doc.horizontal"
         case .form: "list.bullet.rectangle"
         case .chart: "chart.pie"
+        case .dashboard: "rectangle.3.group"
+        }
+    }
+
+    /// View types that show records under group headers when the view has groups.
+    public var supportsGrouping: Bool {
+        switch self {
+        case .grid, .list, .timeline, .gantt: true
+        default: false
         }
     }
 }
@@ -288,9 +302,73 @@ public struct ChartConfig: Codable, Hashable, Sendable {
 }
 
 public enum TimelineScale: String, Codable, CaseIterable, Sendable {
-    case week, month, quarter
+    case week, month, quarter, year
 
     public var displayName: String { rawValue.capitalized }
+}
+
+public enum CalendarMode: String, Codable, CaseIterable, Sendable {
+    case month, week
+
+    public var displayName: String { rawValue.capitalized }
+}
+
+public enum DashboardWidgetKind: String, Codable, CaseIterable, Sendable {
+    case number, chart, list, progress
+
+    public var displayName: String {
+        switch self {
+        case .number: "Number"
+        case .chart: "Chart"
+        case .list: "Record list"
+        case .progress: "Progress"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .number: "number"
+        case .chart: "chart.bar.fill"
+        case .list: "list.bullet"
+        case .progress: "gauge.with.dots.needle.67percent"
+        }
+    }
+}
+
+/// One tile on a dashboard. Which properties apply depends on `kind`: numbers aggregate `fieldID`
+/// over records matching `filter`, charts use `chart`, lists show the first `limit` records by
+/// `sort`, and progress shows the share of records that match `filter`.
+public struct DashboardWidget: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var kind: DashboardWidgetKind
+    public var title: String?
+    /// Columns the widget spans (1 or 2).
+    public var span: Int?
+    public var filter: FilterGroup?
+    public var aggregate: ChartAggregate?
+    public var fieldID: String?
+    public var chart: ChartConfig?
+    public var sort: SortSpec?
+    public var fieldIDs: [String]?
+    public var limit: Int?
+
+    public init(id: String = RowID.make("wdg"), kind: DashboardWidgetKind, title: String? = nil, span: Int? = nil) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.span = span
+    }
+
+    public var columnSpan: Int { min(2, max(1, span ?? 1)) }
+    public var recordLimit: Int { min(50, max(1, limit ?? 5)) }
+}
+
+public struct DashboardConfig: Codable, Hashable, Sendable {
+    public var widgets: [DashboardWidget]
+
+    public init(widgets: [DashboardWidget] = []) {
+        self.widgets = widgets
+    }
 }
 
 public struct ViewConfig: Codable, Hashable, Sendable {
@@ -318,6 +396,16 @@ public struct ViewConfig: Codable, Hashable, Sendable {
     public var chart: ChartConfig?
     /// A locked view's filters, sorts, grouping, fields and layout can't be changed (records can).
     public var locked: Bool?
+    /// List view: a link field whose linked records are nested under each record.
+    public var listChildLinkFieldID: String?
+    /// Gantt view: a link field listing the records each record depends on.
+    public var dependencyFieldID: String?
+    public var dashboard: DashboardConfig?
+    /// Kanban: hide stacks that have no records.
+    public var hideEmptyStacks: Bool?
+    /// Kanban: collapsed stacks, by choice id ("" is the uncategorized stack).
+    public var collapsedStacks: [String]?
+    public var calendarMode: CalendarMode?
 
     public init() {}
 

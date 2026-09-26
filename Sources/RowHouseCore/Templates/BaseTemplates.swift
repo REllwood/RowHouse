@@ -18,7 +18,7 @@ public enum BaseTemplate: String, CaseIterable, Identifiable, Sendable {
     public var summary: String {
         switch self {
         case .blank: "Start from scratch with a single table."
-        case .projectTracker: "Projects, tasks and a team, with a board, roadmap, calendar and automations."
+        case .projectTracker: "Projects, tasks and a team, with a board, Gantt plan, dashboard and automations."
         case .crm: "Companies, contacts and a deal pipeline with weighted forecasts."
         case .contentCalendar: "Plan posts across channels on a calendar and gallery."
         case .inventory: "Products, stock levels, suppliers and low-stock alerts."
@@ -156,6 +156,7 @@ struct TemplateBuilder {
         let progress = field(projects.id, "Progress", .percent)
         let coverField = field(projects.id, "Cover", .attachment)
         let notes = field(projects.id, "Notes", .multilineText)
+        let dependsOn = field(projects.id, "Depends on", .link) { $0.linkedTableID = projects.id }
 
         let tasks = table("Tasks", primary: "Task", description: "Work items linked to projects.")
         let taskProject = link(tasks.id, to: projects.id, name: "Project", inverseName: "Tasks", single: true)
@@ -194,7 +195,7 @@ struct TemplateBuilder {
             ("Q4 marketing campaign", "In progress", "Medium", 3, -10, 25, 30_000, 0.4, "Seasonal campaign across email, social and search."),
             ("Customer portal", "Blocked", "High", 1, -35, 3, 65_000, 0.55, "Self-serve portal for invoices and support tickets."),
             ("Data warehouse migration", "In progress", "Medium", 4, -45, 30, 80_000, 0.7, "Move analytics to the new warehouse and retire the old ETL."),
-            ("Brand refresh", "Done", "Low", 2, -80, -15, 22_000, 1, "Updated logo, colours and type across every touchpoint."),
+            ("Brand refresh", "Done", "Low", 2, -80, -22, 22_000, 1, "Updated logo, colours and type across every touchpoint."),
             ("Onboarding revamp", "Planning", "Medium", 0, 10, 45, 18_000, 0.05, "Shorter sign-up and a guided first week."),
             ("Security audit", "Done", "High", 1, -60, -5, 15_000, 1, "Annual penetration test and remediation."),
         ]
@@ -213,6 +214,11 @@ struct TemplateBuilder {
                 notes: .string(r.8),
             ]))
         }
+        // Website, Q4 campaign ← Brand refresh; Mobile app ← Customer portal, Security audit; Onboarding ← Customer portal.
+        let dependencies: [(Int, [Int])] = [(0, [5]), (2, [5]), (1, [3, 7]), (6, [3])]
+        doc.updateRecords(Dictionary(uniqueKeysWithValues: dependencies.map { dependent, prerequisites in
+            (projectIDs[dependent], [dependsOn: .array(prerequisites.map { .string(projectIDs[$0]) })])
+        }))
         let taskRows: [(String, Int, String, Double, Int, Int)] = [
             ("Wireframes", 0, "Done", 6, -12, 2), ("Visual design", 0, "Doing", 16, 2, 2), ("Build landing pages", 0, "Doing", 24, 8, 1),
             ("Checkout flow", 0, "Todo", 20, 11, 4), ("App store listing", 1, "Todo", 4, 50, 3), ("Beta programme", 1, "Todo", 10, 30, 0),
@@ -236,11 +242,19 @@ struct TemplateBuilder {
                 $0.sorts = [SortSpec(fieldID: due, ascending: true)]
                 $0.summaries = [budget: .sum, progress: .average]
                 $0.columnWidths = [projects.primary: 210, notes: 260, health: 130, owner.id: 150, progress: 100, budget: 120]
-                $0.fieldOrder = [status.id, priority.id, owner.id, health, progress, due, budget, taskCount, totalEstimate, daysLeft, start, coverField, taskProject.inverse, notes]
+                $0.fieldOrder = [status.id, priority.id, owner.id, health, progress, due, budget, taskCount, totalEstimate, daysLeft, start, dependsOn, coverField, taskProject.inverse, notes]
             }
         }
         view(projects.id, "Board", .kanban) { $0.stackFieldID = status.id; $0.coverFieldID = coverField }
         view(projects.id, "Roadmap", .timeline) { $0.dateFieldID = start; $0.endDateFieldID = due; $0.colorFieldID = status.id }
+        view(projects.id, "Delivery plan", .gantt) {
+            $0.dateFieldID = start
+            $0.endDateFieldID = due
+            $0.dependencyFieldID = dependsOn
+            $0.groups = [SortSpec(fieldID: priority.id)]
+            $0.sorts = [SortSpec(fieldID: start)]
+            $0.colorFieldID = status.id
+        }
         view(projects.id, "Due dates", .calendar) { $0.dateFieldID = due; $0.colorFieldID = status.id }
         view(projects.id, "Gallery", .gallery) { $0.coverFieldID = coverField }
         view(projects.id, "Budget by status", .chart) {
@@ -250,6 +264,37 @@ struct TemplateBuilder {
             chart.aggregate = .sum
             chart.valueFieldID = budget
             $0.chart = chart
+        }
+        view(projects.id, "Overview", .dashboard) {
+            var count = DashboardWidget(kind: .number, title: "Projects")
+            count.aggregate = .count
+            var active = DashboardWidget(kind: .number, title: "In flight")
+            active.aggregate = .count
+            active.filter = condition(status.id, .isAnyOf, .array([.string(status.choice["In progress"]!), .string(status.choice["Blocked"]!)]))
+            var spend = DashboardWidget(kind: .number, title: "Total budget")
+            spend.aggregate = .sum
+            spend.fieldID = budget
+            var done = DashboardWidget(kind: .progress, title: "Completed")
+            done.filter = condition(status.id, .is, .array([.string(status.choice["Done"]!)]))
+            var byStatus = DashboardWidget(kind: .chart, title: "Projects by status")
+            var statusChart = ChartConfig()
+            statusChart.kind = .donut
+            statusChart.categoryFieldID = status.id
+            statusChart.aggregate = .count
+            byStatus.chart = statusChart
+            var budgetByPriority = DashboardWidget(kind: .chart, title: "Budget by priority", span: 2)
+            var priorityChart = ChartConfig()
+            priorityChart.kind = .bar
+            priorityChart.categoryFieldID = priority.id
+            priorityChart.aggregate = .sum
+            priorityChart.valueFieldID = budget
+            budgetByPriority.chart = priorityChart
+            var dueSoon = DashboardWidget(kind: .list, title: "Due next", span: 2)
+            dueSoon.filter = condition(status.id, .isNot, .array([.string(status.choice["Done"]!)]))
+            dueSoon.sort = SortSpec(fieldID: due)
+            dueSoon.fieldIDs = [status.id, owner.id, due]
+            dueSoon.limit = 5
+            $0.dashboard = DashboardConfig(widgets: [count, active, done, byStatus, budgetByPriority, dueSoon, spend])
         }
         let formView = view(projects.id, "Project request", .form) {
             var form = FormConfig()

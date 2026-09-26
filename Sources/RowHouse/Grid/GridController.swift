@@ -4,9 +4,10 @@ import SwiftUI
 
 /// Drives the spreadsheet grid: data source, delegate, cell cursor, editing, clipboard and menus.
 @MainActor
-final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSDraggingSource {
     static let rowColumnID = "__row"
     static let addColumnID = "__add"
+    static let rowDragType = NSPasteboard.PasteboardType("com.rellwood.rowhouse.record-rows")
 
     let tableView = GridTableView()
     let scrollView = NSScrollView()
@@ -82,6 +83,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         header.controller = self
         tableView.headerView = header
         tableView.setAccessibilityLabel("Records")
+        tableView.registerForDraggedTypes([Self.rowDragType])
+        tableView.draggingDestinationFeedbackStyle = .regular
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -239,6 +242,13 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let rowView = (tableView.makeView(withIdentifier: NSUserInterfaceItemIdentifier("row"), owner: nil) as? GridRowView) ?? GridRowView()
+        rowView.identifier = NSUserInterfaceItemIdentifier("row")
+        rowView.tint = row < rows.count ? rows[row].recordID.flatMap { document.record($0) }.flatMap { document.recordColor($0, view: view) }.map(GridRowView.tint) : nil
+        return rowView
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         if row >= rows.count {
             return addRowView(for: tableColumn)
@@ -263,7 +273,8 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 v.hovering = row == hoverRow
                 v.rowSelected = selectedRows.contains(row)
                 v.commentCount = document.commentCount(for: recordID)
-                v.accent = document.recordColor(record, view: view)
+                v.accent = document.recordColor(record, view: view).map(Theme.solid)
+                v.draggable = canReorder
                 return v
             }
             if id == Self.addColumnID { return nil }
@@ -719,12 +730,15 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             } else if event.modifierFlags.contains(.shift), let last = selectedRows.last ?? cursor?.row {
                 selectedRows.insert(integersIn: min(last, row)...max(last, row))
                 selectedRows = selectedRows.filteredIndexSet { rows.indices.contains($0) && rows[$0].recordID != nil }
-            } else {
+            } else if !selectedRows.contains(row) || !canReorder {
                 selectedRows = [row]
             }
             cursor = nil
             anchor = nil
             refreshSelection()
+            if canReorder && event.modifierFlags.intersection([.command, .shift]).isEmpty {
+                trackRowDrag(mouseDown: event, row: row)
+            }
             return true
         }
         guard let fi = fieldIndex(forTableColumn: col) else { return true }
@@ -784,6 +798,92 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
                 refreshSelection()
             }
         }
+    }
+
+    // MARK: - Reordering rows
+
+    /// Rows can be dragged by their number to reorder records when the view has no sorts or groups.
+    var canReorder: Bool {
+        let sorted = (view.config.sorts ?? []).contains { document.field($0.fieldID) != nil }
+        let grouped = (view.config.groups ?? []).contains { document.field($0.fieldID) != nil }
+        return view.type == .grid && !sorted && !grouped
+    }
+
+    /// Waits to see whether a click on a row number becomes a drag; a plain click keeps just that row selected.
+    private func trackRowDrag(mouseDown: NSEvent, row: Int) {
+        guard let window = tableView.window else { return }
+        let start = mouseDown.locationInWindow
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp {
+                if selectedRows.count > 1 {
+                    selectedRows = [row]
+                    refreshSelection()
+                }
+                return
+            }
+            let p = next.locationInWindow
+            if hypot(p.x - start.x, p.y - start.y) >= 4 {
+                beginRowDrag(mouseDown: mouseDown, row: row)
+                return
+            }
+        }
+    }
+
+    private func beginRowDrag(mouseDown: NSEvent, row: Int) {
+        let dragged = (selectedRows.contains(row) ? Array(selectedRows) : [row]).sorted()
+        let ids = dragged.compactMap { rows.indices.contains($0) ? rows[$0].recordID : nil }
+        guard !ids.isEmpty else { return }
+        let item = NSPasteboardItem()
+        item.setString(ids.joined(separator: "\n"), forType: Self.rowDragType)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        var frame = tableView.rect(ofRow: row).intersection(tableView.visibleRect)
+        frame.size.width = min(frame.width, 640)
+        dragItem.setDraggingFrame(frame, contents: dragImage(frame: frame, count: ids.count))
+        tableView.beginDraggingSession(with: [dragItem], event: mouseDown, source: self)
+    }
+
+    private func dragImage(frame: NSRect, count: Int) -> NSImage {
+        let snapshot = tableView.bitmapImageRepForCachingDisplay(in: frame)
+        if let snapshot { tableView.cacheDisplay(in: frame, to: snapshot) }
+        return NSImage(size: frame.size, flipped: false) { rect in
+            Theme.gridBackground.setFill()
+            rect.fill()
+            snapshot?.draw(in: rect)
+            NSColor.controlAccentColor.withAlphaComponent(0.6).setStroke()
+            let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
+            border.lineWidth = 1
+            border.stroke()
+            if count > 1 {
+                let text = NSAttributedString(string: "\(count)", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.white])
+                let size = text.size()
+                let badge = NSRect(x: rect.maxX - size.width - 22, y: rect.midY - 9, width: size.width + 14, height: 18)
+                NSColor.controlAccentColor.setFill()
+                NSBezierPath(roundedRect: badge, xRadius: 9, yRadius: 9).fill()
+                text.draw(at: NSPoint(x: badge.minX + 7, y: badge.midY - size.height / 2))
+            }
+            return true
+        }
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
+    }
+
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard canReorder, info.draggingSource as? GridController === self, info.draggingPasteboard.string(forType: Self.rowDragType) != nil else { return [] }
+        tableView.setDropRow(max(0, min(row, rows.count)), dropOperation: .above)
+        return .move
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard canReorder, info.draggingSource as? GridController === self,
+              let text = info.draggingPasteboard.string(forType: Self.rowDragType) else { return false }
+        let ids = text.split(separator: "\n").map(String.init)
+        let visible = rows.compactMap(\.recordID)
+        let anchor = ManualOrder.anchor(visible: visible, moving: Set(ids), dropIndex: row)
+        selectedRows = IndexSet()
+        document.moveRecords(ids, before: anchor)
+        return true
     }
 
     private func openLink(recordID: String, field: FieldModel) {
