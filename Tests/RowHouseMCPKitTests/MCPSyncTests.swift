@@ -139,6 +139,9 @@ struct MCPSyncTests {
         _ = await codexAgain.initialize(client: "codex-mcp-client")
         #expect(codexAgain.server.deviceID == "devHost-agent1")
         for h in [claudeAgain, secondClaude, codexAgain] { h.server.shutdown() }
+        // Looking for an earlier slot doesn't leave empty lock files behind.
+        let locks = try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("agents").path)
+        #expect(locks?.sorted() == ["0.lock", "1.lock", "2.lock"])
     }
 
     @Test func movedAndTrashedBasesAreFollowedNotRecreated() async throws {
