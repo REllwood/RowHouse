@@ -56,7 +56,7 @@ final class AgentIdentity: @unchecked Sendable {
             Self.record(client, in: lockFD)
             return false
         }
-        let better = Self.acquireSlot(in: directory, excluding: current) { $0 == client }
+        let better = Self.acquireSlot(in: directory, excluding: current, createMissing: false) { $0 == client }
             ?? Self.acquireSlot(in: directory, excluding: current) { $0.isEmpty }
         guard let better else {
             Self.record(client, in: lockFD)
@@ -78,8 +78,10 @@ final class AgentIdentity: @unchecked Sendable {
         lockFD = -1
     }
 
-    /// The lowest unlocked slot whose recorded client satisfies `accept`, locked and open.
-    private static func acquireSlot(in directory: URL, excluding excluded: Int? = nil, accept: (String) -> Bool) -> (slot: Int, fd: Int32)? {
+    /// The lowest unlocked slot whose recorded client satisfies `accept`, locked and open. With
+    /// `createMissing` false only slots that already have a lock file are considered, so looking for
+    /// an assistant's earlier slot doesn't leave empty lock files behind.
+    private static func acquireSlot(in directory: URL, excluding excluded: Int? = nil, createMissing: Bool = true, accept: (String) -> Bool) -> (slot: Int, fd: Int32)? {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
@@ -88,7 +90,7 @@ final class AgentIdentity: @unchecked Sendable {
         }
         for slot in 0..<maxSlots where slot != excluded {
             let path = directory.appendingPathComponent("\(slot).lock").path
-            let fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+            let fd = open(path, O_RDWR | O_CLOEXEC | (createMissing ? O_CREAT : 0), 0o644)
             guard fd >= 0 else { continue }
             if flock(fd, LOCK_EX | LOCK_NB) == 0 && accept(recordedClient(fd)) { return (slot, fd) }
             close(fd)
