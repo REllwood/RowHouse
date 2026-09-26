@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         UpdateChecker.shared.checkAutomaticallyIfNeeded()
         MainActor.assumeIsolated { StatusItemController.shared.start() }
+        MainActor.assumeIsolated { WebhookServer.shared.start() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

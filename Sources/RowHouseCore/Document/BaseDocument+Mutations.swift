@@ -696,7 +696,9 @@ extension BaseDocument {
             copy.id = RowID.action()
             return copy
         }
-        return createAutomation(name: a.name + " copy", trigger: a.trigger, actions: actions, enabled: false)
+        var trigger = a.trigger
+        if trigger.kind == .webhookReceived { trigger.webhookToken = Webhooks.makeToken() }
+        return createAutomation(name: a.name + " copy", trigger: trigger, actions: actions, enabled: false)
     }
 
     // MARK: - Helpers

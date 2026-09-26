@@ -94,6 +94,7 @@ private struct AutomationList: View {
                         Button {
                             var trigger = AutomationTrigger(kind: kind, tableID: kind.providesRecord ? document.tables.first?.id : nil)
                             if kind == .scheduled { trigger.schedule = Schedule() }
+                            if kind == .recordEntersView { trigger.viewID = TriggerCard.firstRecordView(document, tableID: trigger.tableID) }
                             selection = document.createAutomation(name: "Untitled automation", trigger: trigger)
                         } label: {
                             Label(kind.displayName, systemImage: kind.symbolName)
@@ -155,7 +156,7 @@ struct AutomationEditor: View {
                 if tab == 0 {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            TriggerCard(document: document, automation: binding)
+                            TriggerCard(document: document, engine: engine, automation: binding)
                             ForEach(Array(binding.actions.wrappedValue.enumerated()), id: \.element.id) { index, _ in
                                 Connector()
                                 ActionCard(session: session, engine: engine, automation: binding, index: index)
@@ -298,7 +299,14 @@ struct StepCard<Content: View>: View {
 
 private struct TriggerCard: View {
     let document: BaseDocument
+    let engine: AutomationEngine
     @Binding var automation: AutomationModel
+
+    /// The view a new "enters view" trigger starts with: the table's first view that can hold records.
+    static func firstRecordView(_ document: BaseDocument, tableID: String?) -> String? {
+        guard let tableID else { return nil }
+        return document.views(in: tableID).first { $0.type != .form }?.id
+    }
 
     var body: some View {
         StepCard(number: "TRIGGER", title: automation.trigger.kind.displayName, symbol: automation.trigger.kind.symbolName, tint: .blue, trailing: {
@@ -307,6 +315,9 @@ private struct TriggerCard: View {
                     Button {
                         var t = AutomationTrigger(kind: kind, tableID: kind.providesRecord ? (automation.trigger.tableID ?? document.tables.first?.id) : nil)
                         if kind == .scheduled { t.schedule = automation.trigger.schedule ?? Schedule() }
+                        if kind == .recordEntersView { t.viewID = Self.firstRecordView(document, tableID: t.tableID) }
+                        // Keep a working webhook URL when the webhook trigger is picked again.
+                        if kind == .webhookReceived, let token = automation.trigger.webhookToken { t.webhookToken = token }
                         automation.trigger = t
                     } label: {
                         Label(kind.displayName, systemImage: kind.symbolName)
@@ -323,7 +334,12 @@ private struct TriggerCard: View {
     private var triggerOptions: some View {
         let kind = automation.trigger.kind
         if kind.providesRecord {
-            Picker("Table", selection: Binding(get: { automation.trigger.tableID ?? "" }, set: { automation.trigger.tableID = $0.isEmpty ? nil : $0 })) {
+            Picker("Table", selection: Binding(get: { automation.trigger.tableID ?? "" }, set: { id in
+                guard id != (automation.trigger.tableID ?? "") else { return }
+                automation.trigger.tableID = id.isEmpty ? nil : id
+                // Views belong to one table, so a form or "enters view" choice can't carry over.
+                automation.trigger.viewID = kind == .recordEntersView ? Self.firstRecordView(document, tableID: automation.trigger.tableID) : nil
+            })) {
                 ForEach(document.tables) { Text($0.name).tag($0.id) }
             }
             .frame(maxWidth: 360)
@@ -352,6 +368,23 @@ private struct TriggerCard: View {
                     Text("This table has no form views yet. Create one from the views list.").font(.caption).foregroundStyle(.secondary)
                 }
             }
+        case .recordEntersView:
+            if let tableID = automation.trigger.tableID {
+                let views = document.views(in: tableID).filter { $0.type != .form }
+                Picker("View", selection: Binding(get: {
+                    views.contains { $0.id == automation.trigger.viewID } ? automation.trigger.viewID ?? "" : ""
+                }, set: { automation.trigger.viewID = $0.isEmpty ? nil : $0 })) {
+                    Text("Choose a view…").tag("")
+                    ForEach(views) { Text($0.name).tag($0.id) }
+                }
+                .frame(maxWidth: 360)
+                Text("Runs when a record starts appearing in this view because of the view's filters. Records already in the view when the automation is turned on don't count.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .webhookReceived:
+            WebhookTriggerOptions(engine: engine, automation: $automation)
         case .scheduled:
             ScheduleEditor(schedule: Binding(get: { automation.trigger.schedule ?? Schedule() }, set: { automation.trigger.schedule = $0 }))
         case .buttonClicked:
@@ -362,6 +395,82 @@ private struct TriggerCard: View {
             Text("Runs only when you click Test.").font(.caption).foregroundStyle(.secondary)
         case .recordCreated:
             Text("Runs each time a record is added to this table on this Mac.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct WebhookTriggerOptions: View {
+    let engine: AutomationEngine
+    @Binding var automation: AutomationModel
+    @AppStorage(WebhookServer.enabledKey) private var serverEnabled = false
+    @AppStorage(WebhookServer.portKey) private var storedPort = Webhooks.defaultPort
+    @State private var confirmRegenerate = false
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let token = automation.trigger.webhookToken, !token.isEmpty {
+                let url = Webhooks.url(automationID: automation.id, token: token, port: WebhookServer.port)
+                HStack(spacing: 8) {
+                    Text(url)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: 480, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.1)))
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url, forType: .string)
+                        copied = true
+                    } label: {
+                        Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    Button("Regenerate Token…") { confirmRegenerate = true }
+                }
+                .onChange(of: url) { _, _ in copied = false }
+            } else {
+                Button("Create Webhook URL") { automation.trigger.webhookToken = Webhooks.makeToken() }
+            }
+            Text("POST a JSON, form or text body (up to 1 MB), or GET with a query string. Later steps can use {{trigger.body.name}}, {{trigger.query.name}} and {{trigger.headers.x-name}}. Keep the URL secret: anyone with it can run this automation.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !serverEnabled {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("Webhooks are turned off on this Mac.").font(.callout)
+                    SettingsLink { Text("Open Settings…") }
+                        .controlSize(.small)
+                }
+            } else if case .failed(let message) = WebhookServer.shared.status {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            if let sample = engine.lastWebhookRequests[automation.id] {
+                Text("Last request: \(sample.method) with \(summary(sample)). Test runs use it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .confirmationDialog("Regenerate the webhook token?", isPresented: $confirmRegenerate) {
+            Button("Regenerate", role: .destructive) { automation.trigger.webhookToken = Webhooks.makeToken() }
+        } message: {
+            Text("The current URL stops working. Update anything that calls it.")
+        }
+    }
+
+    private func summary(_ request: WebhookRequest) -> String {
+        switch request.body {
+        case .object(let fields): return fields.isEmpty ? "an empty body" : "fields " + fields.keys.sorted().joined(separator: ", ")
+        case .array(let items): return "a list of \(items.count)"
+        case .string: return "a text body"
+        case .null: return request.query.isEmpty ? "no body" : "query " + request.query.keys.sorted().joined(separator: ", ")
+        default: return "a body"
         }
     }
 }
@@ -433,6 +542,8 @@ private struct AddActionMenu: View {
                         action.inputs = ["recordId": "{{trigger.record.id}}"]
                     case .sendNotification:
                         action.title = "{{trigger.record.title}}"
+                    case .sendEmail:
+                        action.subject = automation.trigger.kind.providesRecord ? "{{trigger.record.title}}" : automation.name
                     default:
                         break
                     }
