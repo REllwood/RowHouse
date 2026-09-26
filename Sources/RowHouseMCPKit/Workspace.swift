@@ -47,7 +47,6 @@ final class Workspace {
         // Another call may have opened the same base while this one was loading.
         if let existing = sessions[entry.baseID] { return existing }
         sessions[entry.baseID] = session
-        session.flush()
         return session
     }
 

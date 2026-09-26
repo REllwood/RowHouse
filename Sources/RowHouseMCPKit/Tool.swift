@@ -77,7 +77,7 @@ enum Tools {
             "id": .string(session.entry.baseID),
             "name": .string(doc.info.name),
             "tables": .array(doc.tables.map { t in
-                .object(["id": .string(t.id), "name": .string(t.name), "record_count": .number(Double(doc.recordCount(in: t.id)))])
+                .object(["id": .string(t.id), "name": .string(t.name), "recordCount": .number(Double(doc.recordCount(in: t.id)))])
             }),
         ]
         if !doc.info.description.isEmpty { out["description"] = .string(doc.info.description) }
@@ -88,11 +88,14 @@ enum Tools {
         var out: [String: JSONValue] = [
             "id": .string(table.id),
             "name": .string(table.name),
-            "record_count": .number(Double(doc.recordCount(in: table.id))),
+            "recordCount": .number(Double(doc.recordCount(in: table.id))),
             "fields": .array(doc.fields(in: table.id).map { fieldSchema($0, in: doc) }),
             "views": .array(doc.views(in: table.id).map { .object(["id": .string($0.id), "name": .string($0.name), "type": .string($0.type.rawValue)]) }),
         ]
-        if let primary = doc.primaryField(of: table.id) { out["primary_field"] = .string(primary.name) }
+        if let primary = doc.primaryField(of: table.id) {
+            out["primaryField"] = .string(primary.name)
+            out["primaryFieldId"] = .string(primary.id)
+        }
         if !table.description.isEmpty { out["description"] = .string(table.description) }
         return .object(out)
     }
@@ -103,7 +106,7 @@ enum Tools {
             "name": .string(field.name),
             "type": .string(field.type.rawValue),
         ]
-        if field.type.isComputed || field.type == .attachment { out["read_only"] = true }
+        if field.type.isComputed || field.type == .attachment { out["readOnly"] = true }
         if doc.primaryField(of: field.tableID)?.id == field.id { out["primary"] = true }
         if !field.description.isEmpty { out["description"] = .string(field.description) }
         let options = FieldOptionsCoding.describe(field, in: doc)

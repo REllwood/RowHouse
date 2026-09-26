@@ -7,7 +7,7 @@ import RowHouseCore
 enum FieldTypeGuide {
     static func all() -> JSONValue {
         .object([
-            "field_types": .array(FieldType.allCases.map(entry)),
+            "fieldTypes": .array(FieldType.allCases.map(entry)),
             "notes": .array([
                 "Record fields are keyed by field name (or id). Empty values are left out of records unless noted.",
                 "Pass null to clear a field.",
@@ -22,10 +22,10 @@ enum FieldTypeGuide {
         let (read, write) = formats(type)
         var out: [String: JSONValue] = [
             "type": .string(type.rawValue),
-            "display_name": .string(type.displayName),
+            "displayName": .string(type.displayName),
             "category": .string(type.category.rawValue),
-            "read_only": .bool(!writable(type)),
-            "can_be_primary": .bool(type.canBePrimary),
+            "readOnly": .bool(!writable(type)),
+            "canBePrimary": .bool(type.canBePrimary),
             "read": .string(read),
             "write": .string(write),
         ]

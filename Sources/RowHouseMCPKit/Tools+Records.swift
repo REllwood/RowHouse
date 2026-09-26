@@ -122,8 +122,8 @@ extension Tools {
         let doc = session.document
         guard case .object(var json) = recordJSON(record, coding: coding(session), includeEmpty: true) else { return .null }
         json["table"] = .string(doc.table(record.tableID)?.name ?? "")
-        json["table_id"] = .string(record.tableID)
-        json["comment_count"] = .number(Double(doc.commentCount(for: record.id)))
+        json["tableId"] = .string(record.tableID)
+        json["commentCount"] = .number(Double(doc.commentCount(for: record.id)))
         return .object(json)
     }
 
@@ -158,8 +158,8 @@ extension Tools {
                 total += 1
                 guard results.count < maxRecords, case .object(var json) = recordJSON(record, coding: coding) else { continue }
                 json["table"] = .string(table.name)
-                json["table_id"] = .string(table.id)
-                json["matched_fields"] = .array(matched.map { .string($0.name) })
+                json["tableId"] = .string(table.id)
+                json["matchedFields"] = .array(matched.map { .string($0.name) })
                 results.append(.object(json))
             }
         }
@@ -326,7 +326,7 @@ extension Tools {
         guard let comment = doc.comments(for: record.id).last(where: { $0.authorDeviceID == doc.deviceID }) else {
             throw ToolError("The comment couldn't be added")
         }
-        return .object(["comment": commentJSON(comment), "record_id": .string(record.id)])
+        return .object(["comment": commentJSON(comment), "recordId": .string(record.id)])
     }
 
     static func commentJSON(_ comment: CommentModel) -> JSONValue {

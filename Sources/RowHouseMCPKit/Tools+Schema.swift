@@ -69,6 +69,7 @@ extension Tools {
         let session = await AgentSession.open(entry: entry, deviceID: ws.agent.deviceID, deviceName: ws.deviceName)
         session.document.apply(template: template, storage: session.storage)
         session.document.updateBaseInfo(name: name)
+        session.flush()
         session.writeSnapshot()
         ws.adopt(session)
         return baseSummary(session)

@@ -32,7 +32,6 @@ public final class MCPServer {
     let configuration: Configuration
     let workspace: Workspace
     private(set) var protocolVersion = MCPServer.supportedProtocolVersions[0]
-    private(set) var clientName: String?
     private lazy var tools: [String: Tool] = Dictionary(uniqueKeysWithValues: Tools.all.map { ($0.name, $0) })
 
     public init(configuration: Configuration = Configuration()) {
@@ -156,7 +155,6 @@ public final class MCPServer {
         protocolVersion = requested.flatMap { Self.supportedProtocolVersions.contains($0) ? $0 : nil } ?? Self.supportedProtocolVersions[0]
         if let info = params?["clientInfo"] {
             let name = Self.friendlyClientName(name: info["name"]?.stringValue, title: info["title"]?.stringValue)
-            clientName = name
             workspace.rename(to: "\(name) (MCP)")
         }
         return .object([

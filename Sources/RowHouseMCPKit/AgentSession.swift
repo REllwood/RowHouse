@@ -4,7 +4,8 @@ import RowHouseCore
 /// A base opened by the server: its document plus this agent's storage. Unlike the app's
 /// `BaseSession` there is no file watcher, timer or undo; the server pulls other devices' changes
 /// right before each tool call and flushes its own right after, which is all a request/response
-/// process needs.
+/// process needs. Reading a base never writes to it: the agent's device folder only appears once
+/// it makes a change.
 @MainActor
 final class AgentSession {
     static let snapshotEveryOps = 1_000
@@ -13,6 +14,7 @@ final class AgentSession {
     let storage: BaseStorage
     let document: BaseDocument
     private(set) var opsSinceSnapshot = 0
+    private var registered = false
 
     private init(entry: LibraryEntry, storage: BaseStorage, document: BaseDocument) {
         self.entry = entry
@@ -20,7 +22,7 @@ final class AgentSession {
         self.document = document
     }
 
-    /// Reads every device's snapshot and logs, then registers this agent as a device of the base.
+    /// Reads every device's snapshot and logs.
     static func open(entry: LibraryEntry, deviceID: String, deviceName: String) async -> AgentSession {
         let storage = BaseStorage(packageURL: entry.url, deviceID: deviceID)
         let loaded = await Task.detached(priority: .userInitiated) { storage.loadAll() }.value
@@ -31,8 +33,6 @@ final class AgentSession {
             session.storage.append(ops)
             session.opsSinceSnapshot += ops.count
         }
-        document.registerDevice(kind: DeviceInfo.agentKind)
-        if storage.needsInitialSnapshot { session.writeSnapshot() }
         return session
     }
 
@@ -46,8 +46,13 @@ final class AgentSession {
         if !changes.ops.isEmpty { document.mergeRemote(changes.ops) }
     }
 
-    /// Waits until this agent's operations are on disk, where the app's file watcher picks them up.
+    /// Call after a change: records this agent as a device of the base (so the app can name it as
+    /// the author) and waits until the operations are on disk, where the app's file watcher sees them.
     func flush() {
+        if opsSinceSnapshot > 0 && !registered {
+            registered = true
+            document.registerDevice(kind: DeviceInfo.agentKind)
+        }
         storage.flush()
         if opsSinceSnapshot >= Self.snapshotEveryOps { writeSnapshot() }
     }
@@ -61,12 +66,13 @@ final class AgentSession {
     func renameDevice(_ name: String) {
         guard document.deviceName != name else { return }
         document.deviceName = name
+        guard registered else { return }
         document.registerDevice(kind: DeviceInfo.agentKind)
         storage.flush()
     }
 
-    /// Final snapshot before the process exits.
+    /// Final snapshot before the process exits, when this agent changed anything.
     func close() {
-        if opsSinceSnapshot > 0 { writeSnapshot() } else { storage.flush() }
+        if opsSinceSnapshot > 0 { writeSnapshot() }
     }
 }

@@ -60,6 +60,30 @@ struct MCPSyncTests {
         #expect(doc.displayString(doc.record(recordID)!, status) == "Todo")
     }
 
+    @Test func readingABaseNeverWritesToIt() async throws {
+        let h = MCPHarness()
+        defer { h.cleanUp() }
+        try FileManager.default.createDirectory(at: h.libraryURL, withIntermediateDirectories: true)
+        let entry = try Library(rootURL: h.libraryURL).createPackage(named: "Theirs")
+        let mac = try await BaseSession.open(entry: entry, identity: DeviceIdentity(id: "devMac", name: "Mac"))
+        mac.document.updateBaseInfo(name: "Theirs")
+        let table = mac.document.createTable(name: "Notes", starterFields: false, emptyRecords: 2)
+        mac.close()
+
+        _ = await h.call("list_bases")
+        _ = await h.call("get_base_schema", ["base": "Theirs"])
+        _ = await h.call("list_records", ["base": "Theirs", "table": .string(table)])
+        _ = await h.callError("create_records", ["base": "Theirs", "table": .string(table), "records": [["fields": ["Nope": 1]]]])
+        h.server.shutdown()
+        let devices = entry.url.appendingPathComponent("devices")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: devices.path) == ["devMac"])
+
+        let writer = MCPHarness(root: h.root)
+        _ = await writer.call("create_records", ["base": "Theirs", "table": .string(table), "records": [["fields": ["Name": "Mine"]]]])
+        writer.server.shutdown()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: devices.path).sorted() == ["devHost-agent0", "devMac"])
+    }
+
     @Test func shutdownLeavesASnapshotThatReloads() async throws {
         let h = MCPHarness()
         _ = await h.initialize()

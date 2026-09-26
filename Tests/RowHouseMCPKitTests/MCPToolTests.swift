@@ -131,7 +131,7 @@ struct MCPToolTests {
 
         let schema = await h.call("get_base_schema", ["base": "Tracker", "table": "Tasks"])
         let tasks = schema["tables"]?.arrayValue?.first
-        #expect(tasks?["primary_field"] == "Task")
+        #expect(tasks?["primaryField"] == "Task")
         let fields = tasks?["fields"]?.arrayValue ?? []
         let status = fields.first { $0["name"] == "Status" }
         #expect(status?["type"] == "singleSelect")
@@ -160,10 +160,10 @@ struct MCPToolTests {
 
         let found = await h.call("search_records", ["base": "Tracker", "query": .string(String(title.prefix(5)).uppercased())])
         #expect(found["records"]?.arrayValue?.contains { $0["id"]?.stringValue == firstID } == true)
-        #expect(found["records"]?.arrayValue?.first?["matched_fields"]?.arrayValue?.isEmpty == false)
+        #expect(found["records"]?.arrayValue?.first?["matchedFields"]?.arrayValue?.isEmpty == false)
 
         let guide = await h.call("describe_field_types")
-        #expect(guide["field_types"]?.arrayValue?.compactMap { $0["type"]?.stringValue } == FieldType.allCases.map(\.rawValue))
+        #expect(guide["fieldTypes"]?.arrayValue?.compactMap { $0["type"]?.stringValue } == FieldType.allCases.map(\.rawValue))
     }
 
     @Test func tablesAndFieldsCanBeBuiltAndChanged() async {
@@ -242,6 +242,33 @@ struct MCPToolTests {
         #expect(table["description"] == "Placed with suppliers")
         let clash = await h.callError("update_table", ["base": "Shop", "table": "Purchase orders", "name": "suppliers"])
         #expect(clash.contains("already exists"))
+    }
+
+    @Test func edgeCasesAreReportedClearly() async {
+        let h = await harnessWithTasks()
+        defer { h.cleanUp() }
+        let created = await h.call("create_records", ["base": "Work", "table": "Tasks", "records": [["fields": ["Task": "Only a name"]]]])
+        let id = created["records"]?.arrayValue?.first?["id"] ?? .null
+        let record = await h.call("get_record", ["base": "Work", "record_id": id])
+        #expect(record["fields"]?["Qty"] == .null)
+        #expect(record["fields"]?["Task"] == "Only a name")
+        #expect(record["tableId"]?.stringValue?.hasPrefix("tbl") == true)
+        #expect(record["commentCount"] == 0)
+
+        let unknownField = await h.callError("list_records", ["base": "Work", "table": "Tasks", "fields": ["Task", "Owner"]])
+        #expect(unknownField.hasPrefix("No field named Owner in table Tasks"))
+        let badSort = await h.callError("list_records", ["base": "Work", "table": "Tasks", "sort": [["field": "Qty", "direction": "down"]]])
+        #expect(badSort == "Sort direction must be asc or desc")
+        let noChange = await h.callError("update_field", ["base": "Work", "table": "Tasks", "field": "Qty"])
+        #expect(noChange == "Pass a new name, description or options")
+        let wrongTable = await h.callError("update_records", ["base": "Work", "table": "Table 1", "records": [["id": id, "fields": ["Name": "x"]]]])
+        #expect(wrongTable.contains("belongs to table Tasks"))
+
+        _ = await h.call("create_field", ["base": "Work", "table": "Tasks", "name": "Area", "type": "link", "options": ["linked_table": "Table 1"]])
+        let inverse = await h.callError("update_field", ["base": "Work", "table": "Table 1", "field": "Tasks", "options": ["linked_table": "Tasks"]])
+        #expect(inverse.contains("paired side of Area"))
+        let stringified = await h.call("update_records", ["base": "Work", "table": "Tasks", "records": .string("[{\"id\": \"Only a name\", \"fields\": {\"Qty\": 2}}]")])
+        #expect(stringified["records"]?.arrayValue?.first?["fields"]?["Double"] == 4)
     }
 
     @Test func commentsAreSignedByTheAssistant() async {
