@@ -210,7 +210,13 @@ public final class RecordValueCoding {
         guard document.table(tableID) != nil else { throw Failure("No table \(tableID)") }
         var values: [[String: JSONValue]] = []
         do throws(Failure) {
-            for fields in records { values.append(try storedValues(fields, tableID: tableID).filter { !$0.value.isNull }) }
+            for (index, fields) in records.enumerated() {
+                do throws(Failure) {
+                    values.append(try storedValues(fields, tableID: tableID).filter { !$0.value.isNull })
+                } catch {
+                    throw records.count > 1 ? Failure("Record \(index + 1): \(error.message)") : error
+                }
+            }
         } catch {
             pendingChoices = [:]
             throw error
@@ -232,7 +238,11 @@ public final class RecordValueCoding {
                 guard let record = document.record(update.id), record.tableID == tableID else {
                     throw Failure("No record \(update.id) in table \(document.table(tableID)?.name ?? tableID)")
                 }
-                values[update.id, default: [:]].merge(try storedValues(update.fields, tableID: tableID)) { _, new in new }
+                do throws(Failure) {
+                    values[update.id, default: [:]].merge(try storedValues(update.fields, tableID: tableID)) { _, new in new }
+                } catch {
+                    throw updates.count > 1 ? Failure("Record \(update.id): \(error.message)") : error
+                }
             }
         } catch {
             pendingChoices = [:]
