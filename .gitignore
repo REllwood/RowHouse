@@ -1,0 +1,21 @@
+# Build output
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.dmg
+*.zip
+
+# macOS
+.DS_Store
+
+# Development notes and agent artifacts — never shipped
+.forge/
+.agents/
+.planning/
+.claude/
+docs/
+graphify-out/
+scratch/
