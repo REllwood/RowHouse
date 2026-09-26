@@ -269,6 +269,14 @@ struct MCPToolTests {
         #expect(inverse.contains("paired side of Area"))
         let stringified = await h.call("update_records", ["base": "Work", "table": "Tasks", "records": .string("[{\"id\": \"Only a name\", \"fields\": {\"Qty\": 2}}]")])
         #expect(stringified["records"]?.arrayValue?.first?["fields"]?["Double"] == 4)
+
+        _ = await h.call("create_records", ["base": "Work", "table": "Tasks", "records": [["fields": ["Task": "only a name"]], ["fields": ["Qty": 1]], ["fields": ["Qty": 2]]]])
+        let exact = await h.call("get_record", ["base": "Work", "table": "Tasks", "record_id": "Only a name"])
+        #expect(exact["id"] == id)
+        let ambiguous = await h.callError("delete_records", ["base": "Work", "table": "Tasks", "record_ids": ["ONLY A NAME"]])
+        #expect(ambiguous.hasPrefix("2 records are called ONLY A NAME"))
+        let unnamed = await h.callError("update_records", ["base": "Work", "table": "Tasks", "records": [["id": "Unnamed record", "fields": ["Qty": 3]]]])
+        #expect(unnamed.hasPrefix("2 records are called Unnamed record"))
     }
 
     @Test func commentsAreSignedByTheAssistant() async {

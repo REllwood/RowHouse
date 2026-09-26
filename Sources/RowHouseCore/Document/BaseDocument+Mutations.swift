@@ -607,10 +607,13 @@ extension BaseDocument {
 
     // MARK: - Comments
 
-    public func addComment(to recordID: String, text: String) {
+    /// Adds a comment and returns its id (nil when the text is empty).
+    @discardableResult
+    public func addComment(to recordID: String, text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        commit([Mutation(.comment, RowID.comment(), [
+        guard !trimmed.isEmpty else { return nil }
+        let id = RowID.comment()
+        commit([Mutation(.comment, id, [
             "record": .string(recordID),
             "text": .string(trimmed),
             "author": .string(deviceID),
@@ -618,6 +621,7 @@ extension BaseDocument {
             "created": .number(Date().timeIntervalSince1970 * 1000),
             "_deleted": .bool(false),
         ])], actionName: "Add Comment")
+        return id
     }
 
     public func deleteComment(_ id: String) {

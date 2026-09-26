@@ -69,7 +69,7 @@ extension Tools {
         let session = await AgentSession.open(entry: entry, deviceID: ws.agent.deviceID, deviceName: ws.deviceName)
         session.document.apply(template: template, storage: session.storage)
         session.document.updateBaseInfo(name: name)
-        session.flush()
+        try session.flush()
         session.writeSnapshot()
         ws.adopt(session)
         return baseSummary(session)
@@ -113,10 +113,10 @@ extension Tools {
             try createFields(specs, in: tableID, tableName: name, document: doc, replacingPrimary: true)
         } catch {
             discardTable(tableID, in: doc)
-            session.flush()
+            try? session.flush()
             throw error
         }
-        session.flush()
+        try session.flush()
         guard let table = doc.table(tableID) else { throw ToolError("The table couldn't be created") }
         return tableSchema(table, in: doc)
     }
@@ -131,7 +131,7 @@ extension Tools {
             "name": Schema.string("New name; must be unique in the base."),
             "description": Schema.string("New description (empty string clears it)."),
         ], required: ["base", "table"]),
-        effect: .additive
+        effect: .destructive
     ) { args, ws in
         let session = try await ws.base(try args.string("base"))
         let doc = session.document
@@ -144,7 +144,7 @@ extension Tools {
             doc.renameTable(table.id, to: name)
         }
         if let description { doc.updateTableDescription(table.id, description) }
-        session.flush()
+        try session.flush()
         return tableSchema(doc.table(table.id) ?? table, in: doc)
     }
 
@@ -184,7 +184,7 @@ extension Tools {
         let target = FieldOptionsCoding.Target(tableID: table.id, tableName: table.name, fieldID: nil, fieldName: parsed.name)
         let options = try FieldOptionsCoding.apply(parsed.options, to: FieldOptions(), type: parsed.type, target: target, document: doc, resolveReferences: true)
         let id = doc.createField(in: table.id, name: parsed.name, type: parsed.type, options: options, description: parsed.description ?? "")
-        session.flush()
+        try session.flush()
         guard let field = doc.field(id) else { throw ToolError("The field couldn't be created") }
         return fieldSchema(field, in: doc)
     }
@@ -203,7 +203,7 @@ extension Tools {
             "description": Schema.string("New description (empty string clears it)."),
             "options": Schema.freeObject("Options to change. See describe_field_types."),
         ], required: ["base", "table", "field"]),
-        effect: .additive
+        effect: .destructive
     ) { args, ws in
         let session = try await ws.base(try args.string("base"))
         let doc = session.document
@@ -228,7 +228,7 @@ extension Tools {
             options = try FieldOptionsCoding.apply(normalized, to: field.options, type: field.type, target: target, document: doc, resolveReferences: true)
         }
         doc.updateField(field.id, name: name, options: options, description: description)
-        session.flush()
+        try session.flush()
         return fieldSchema(doc.field(field.id) ?? field, in: doc)
     }
 

@@ -18,13 +18,14 @@ final class Workspace {
 
     var openSessions: [AgentSession] { Array(sessions.values) }
 
-    /// Bases in the library, re-read from disk so bases created elsewhere show up.
+    /// Bases in the library, re-read from disk so bases created, moved or removed elsewhere show up.
     func entries() throws(ToolError) -> [LibraryEntry] {
         library.refresh()
         if let error = library.lastError { throw Self.accessError(root: library.rootURL, detail: error) }
-        let live = Set(library.entries.map(\.baseID))
-        for (id, session) in sessions where !live.contains(id) {
-            session.close()
+        let live = Dictionary(library.entries.map { ($0.baseID, $0.url.standardizedFileURL) }, uniquingKeysWith: { first, _ in first })
+        for (id, session) in sessions where live[id] != session.entry.url.standardizedFileURL {
+            // Gone, or moved or renamed in Finder: its edits are already on disk (every change is
+            // flushed), so the session is dropped without writing, and reopened where it now lives.
             sessions[id] = nil
         }
         return library.entries
@@ -77,8 +78,14 @@ final class Workspace {
         sessions[session.entry.baseID] = session
     }
 
-    /// Updates the name other devices show for this assistant ("Claude Code (MCP)").
-    func rename(to name: String) {
+    /// Called when the client introduces itself: settles which agent slot to write as (while nothing
+    /// has been written yet) and the name other devices show, e.g. "Claude Code (MCP)".
+    func introduce(client: String) {
+        if !sessions.values.contains(where: \.hasWritten), agent.claim(for: client) {
+            sessions = [:]
+            Log.info("writing as \(agent.deviceID)")
+        }
+        let name = "\(client) (MCP)"
         guard name != deviceName else { return }
         deviceName = name
         for session in sessions.values { session.renameDevice(name) }
@@ -99,6 +106,14 @@ final class Workspace {
 @MainActor
 struct BaseLookup {
     let session: AgentSession
+    /// Indexes primary field values the first time a record is looked up by one.
+    private let titles: RecordValueCoding
+
+    init(session: AgentSession) {
+        self.session = session
+        titles = RecordValueCoding(document: session.document)
+    }
+
     var document: BaseDocument { session.document }
     var baseName: String { document.info.name }
 
@@ -135,11 +150,11 @@ struct BaseLookup {
             return r
         }
         let tables = table.map { [$0] } ?? document.tables
-        let matches = tables.compactMap { t in document.findRecord(titled: key, in: t.id).flatMap { document.record($0) } }
+        let matches = tables.flatMap { t in titles.recordIDs(titled: key, in: t.id).compactMap { document.record($0) } }
         if matches.count == 1 { return matches[0] }
         if matches.count > 1 {
-            let places = matches.map { "\($0.id) in \(document.table($0.tableID)?.name ?? "")" }.joined(separator: ", ")
-            throw ToolError("Several records are called \(key) (\(places)); pass a record id or a table.")
+            let places = matches.prefix(10).map { "\($0.id) in \(document.table($0.tableID)?.name ?? "")" }.joined(separator: ", ")
+            throw ToolError("\(matches.count) records are called \(key) (\(places)); pass a record id instead.")
         }
         if let table { throw ToolError("No record \(key) in table \(table.name). Pass a record id (rec…) or the primary field value.") }
         throw ToolError("No record \(key) in base \(baseName). Pass a record id (rec…).")

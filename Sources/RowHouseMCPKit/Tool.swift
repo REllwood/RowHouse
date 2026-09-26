@@ -29,7 +29,7 @@ struct Tool {
                 "title": .string(title),
                 "readOnlyHint": .bool(effect == .readOnly),
                 "destructiveHint": .bool(effect == .destructive),
-                "idempotentHint": .bool(effect == .readOnly),
+                "idempotentHint": .bool(effect != .additive),
                 "openWorldHint": false,
             ]),
         ])

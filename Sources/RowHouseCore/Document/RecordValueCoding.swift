@@ -35,17 +35,25 @@ public final class RecordValueCoding {
     public let style: Style
     /// When true, select option names that don't exist yet become new options instead of failing.
     public let typecast: Bool
+    /// When true, values that can't be used are dropped instead of failing the write: unknown linked
+    /// records are skipped, unreadable dates clear the cell and lists written to text are joined. This
+    /// is how automation scripts have always behaved.
+    public let lenient: Bool
     /// The base's attachments folder; when set, attachments are given a `file://` URL.
     public let attachmentsURL: URL?
 
     /// Options needed by converted values that don't exist yet, keyed by field id. They're added when
     /// the values are written, so a write that fails validation never leaves stray options behind.
     private var pendingChoices: [String: [SelectChoice]] = [:]
+    /// Primary field values → record ids, per table, built on first use. Valid while the coder is
+    /// used for one read or write.
+    private var titleIndexes: [String: (exact: [String: [String]], folded: [String: [String]])] = [:]
 
-    public init(document: BaseDocument, style: Style = .api, typecast: Bool = false, attachmentsURL: URL? = nil) {
+    public init(document: BaseDocument, style: Style = .api, typecast: Bool = false, lenient: Bool = false, attachmentsURL: URL? = nil) {
         self.document = document
         self.style = style
         self.typecast = typecast
+        self.lenient = lenient
         self.attachmentsURL = attachmentsURL
     }
 
@@ -142,14 +150,18 @@ public final class RecordValueCoding {
         if value.isNull { return .null }
         switch field.type {
         case .singleLineText, .multilineText, .email, .url, .phoneNumber:
-            guard let text = Self.scalarText(value) else { throw Failure("\(field.name) expects text") }
+            guard let text = Self.scalarText(value) ?? (lenient ? TemplateRenderer.string(value) : nil) else {
+                throw Failure("\(field.name) expects text")
+            }
             return document.parseValue(text, for: field, createMissingChoices: false)
         case .number, .currency, .percent, .duration, .rating:
             return try number(value, for: field)
         case .checkbox:
             if let b = value.boolValue { return .bool(b) }
             if let n = value.numberValue { return .bool(n != 0) }
-            if let s = value.stringValue { return .bool(ValueParsing.truthyStrings.contains(s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())) }
+            if let s = value.stringValue ?? (lenient ? TemplateRenderer.string(value) : nil) {
+                return .bool(ValueParsing.truthyStrings.contains(s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()))
+            }
             throw Failure("\(field.name) expects true or false")
         case .singleSelect:
             let item: JSONValue
@@ -173,21 +185,40 @@ public final class RecordValueCoding {
             }
             return ids.isEmpty ? .null : .array(ids.map(JSONValue.string))
         case .date:
-            guard let s = value.stringValue else { throw Failure("\(field.name) expects a date such as \"2026-09-26\" or \"2026-09-26T14:30:00Z\"") }
-            if s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .null }
-            guard let date = DateCoding.parseUserInput(s) else {
-                throw Failure("\(field.name) expects a date such as \"2026-09-26\" or \"2026-09-26T14:30:00Z\", not \"\(s)\"")
-            }
-            return .string(DateCoding.encode(date, includeTime: field.includesTime))
+            let text = value.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text?.isEmpty == true { return .null }
+            if let text, let stored = Self.date(text, includeTime: field.includesTime) { return .string(stored) }
+            if lenient { return .null }
+            let example = "a date such as \"2026-09-26\" or \"2026-09-26T14:30:00Z\""
+            throw Failure(text.map { "\(field.name) expects \(example), not \"\($0)\"" } ?? "\(field.name) expects \(example)")
         case .link:
             return try links(value, for: field)
         case .attachment:
             throw Failure("\(field.name) is an attachment field; attachments can't be written here, add files in RowHouse")
         default:
             // Types without a dedicated JSON form take text, read the way typed input is.
-            guard let text = Self.scalarText(value) else { throw Failure("\(field.name) expects text") }
+            guard let text = Self.scalarText(value) ?? (lenient ? TemplateRenderer.string(value) : nil) else {
+                throw Failure("\(field.name) expects text")
+            }
             return document.parseValue(text, for: field, createMissingChoices: false)
         }
+    }
+
+    /// Records of a table whose primary field value is `title`: exact matches if there are any,
+    /// otherwise matches ignoring case.
+    public func recordIDs(titled title: String, in tableID: String) -> [String] {
+        if titleIndexes[tableID] == nil {
+            var exact: [String: [String]] = [:]
+            var folded: [String: [String]] = [:]
+            for record in document.records(in: tableID) {
+                let t = document.primaryTitle(record)
+                exact[t, default: []].append(record.id)
+                folded[t.lowercased(), default: []].append(record.id)
+            }
+            titleIndexes[tableID] = (exact, folded)
+        }
+        let index = titleIndexes[tableID]!
+        return index.exact[title] ?? index.folded[title.lowercased()] ?? []
     }
 
     /// Adds the select options that converted values need. Not needed after `createRecords` or
@@ -265,7 +296,10 @@ public final class RecordValueCoding {
         default: expected = "a number"
         }
         var stored: JSONValue
-        if let n = value.numberValue {
+        // A plain number in a string means the same as the number itself; other text is read the way
+        // a person types it ("25%", "1:30", "$1,200").
+        let plain = value.stringValue.flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if let n = value.numberValue ?? plain {
             guard n.isFinite else { throw Failure("\(field.name) expects \(expected)") }
             stored = .number(n)
         } else if let s = value.stringValue {
@@ -332,15 +366,25 @@ public final class RecordValueCoding {
             let id: String
             if let r = document.record(key), r.tableID == tableID {
                 id = key
-            } else if let found = document.findRecord(titled: key, in: tableID) {
-                id = found
             } else {
-                throw Failure("\(field.name): no record \(key) in \(table.name). Links must name an existing record by id or primary field value.")
+                let matches = recordIDs(titled: key, in: tableID)
+                if matches.count == 1 {
+                    id = matches[0]
+                } else if lenient, let first = matches.first {
+                    id = first
+                } else if lenient {
+                    continue
+                } else if matches.isEmpty {
+                    throw Failure("\(field.name): no record \(key) in \(table.name). Links must name an existing record by id or primary field value.")
+                } else {
+                    throw Failure("\(field.name): \(matches.count) records in \(table.name) are called \(key); link them by record id")
+                }
             }
             if !ids.contains(id) { ids.append(id) }
         }
         if field.options.singleRecordLink == true && !field.isInverseLink && ids.count > 1 {
-            throw Failure("\(field.name) links to a single record; pass one")
+            guard lenient else { throw Failure("\(field.name) links to a single record; pass one") }
+            ids = [ids[0]]
         }
         return ids.isEmpty ? .null : .array(ids.map(JSONValue.string))
     }
@@ -348,9 +392,38 @@ public final class RecordValueCoding {
     private static func scalarText(_ value: JSONValue) -> String? {
         switch value {
         case .string(let s): return s
-        case .number(let n): return ValueParsing.editableNumber(n)
+        case .number(let n):
+            guard n.isFinite else { return nil }
+            return n == n.rounded() && abs(n) < 1e15 ? String(Int64(n)) : "\(n)"
         case .bool(let b): return b ? "true" : "false"
         default: return nil
         }
+    }
+
+    /// Stored form of a date given as "YYYY-MM-DD", an ISO-8601 date-time (with or without a zone) or
+    /// text a person might type. A date-only field keeps the calendar day written in an ISO date-time
+    /// rather than shifting it into this Mac's time zone.
+    static func date(_ text: String, includeTime: Bool) -> String? {
+        let isoDateTime = text.count > 10 && text.utf8.count == text.count && Array(text)[10] == "T"
+        if isoDateTime && !includeTime {
+            let day = String(text.prefix(10))
+            guard DateCoding.dayDate(day) != nil, parseDateTime(text) != nil else { return nil }
+            return day
+        }
+        guard let date = (isoDateTime ? parseDateTime(text) : nil) ?? DateCoding.parseUserInput(text) else { return nil }
+        return DateCoding.encode(date, includeTime: includeTime)
+    }
+
+    /// ISO-8601 date-times; ones without a zone are read in this Mac's time zone.
+    private static func parseDateTime(_ text: String) -> Date? {
+        if let d = DateCoding.parseISO(text) { return d }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        for pattern in ["yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm"] {
+            formatter.dateFormat = pattern
+            if let d = formatter.date(from: text) { return d }
+        }
+        return nil
     }
 }

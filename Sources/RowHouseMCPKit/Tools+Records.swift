@@ -190,7 +190,7 @@ extension Tools {
         let items = try recordItems(try args.array("records"), requireID: false)
         let coding = coding(session, typecast: try args.bool("typecast", default: false))
         let ids = try coding.createRecords(items.map(\.fields), in: table.id)
-        session.flush()
+        try session.flush()
         let doc = session.document
         return .object(["records": .array(ids.compactMap { doc.record($0) }.map { recordJSON($0, coding: coding) })])
     }
@@ -238,7 +238,7 @@ extension Tools {
             ),
             "typecast": typecastArgument,
         ], required: ["base", "table", "records"]),
-        effect: .additive
+        effect: .destructive
     ) { args, ws in
         let session = try await ws.base(try args.string("base"))
         let lookup = BaseLookup(session: session)
@@ -247,7 +247,7 @@ extension Tools {
         for i in updates.indices { updates[i].id = try lookup.record(updates[i].id, in: table).id }
         let coding = coding(session, typecast: try args.bool("typecast", default: false))
         try coding.updateRecords(updates, in: table.id)
-        session.flush()
+        try session.flush()
         let doc = session.document
         var seen = Set<String>()
         let ids = updates.map(\.id).filter { seen.insert($0).inserted }
@@ -275,7 +275,7 @@ extension Tools {
         var seen = Set<String>()
         let ids = try lookup.records(keys, in: table).map(\.id).filter { seen.insert($0).inserted }
         session.document.deleteRecords(ids)
-        session.flush()
+        try session.flush()
         return .object(["records": .array(ids.map { .object(["id": .string($0), "deleted": true]) })])
     }
 
@@ -321,9 +321,9 @@ extension Tools {
         let record = try lookup.record(try args.string("record_id"), in: table)
         let text = try args.string("text")
         let doc = session.document
-        doc.addComment(to: record.id, text: text)
-        session.flush()
-        guard let comment = doc.comments(for: record.id).last(where: { $0.authorDeviceID == doc.deviceID }) else {
+        let id = doc.addComment(to: record.id, text: text)
+        try session.flush()
+        guard let comment = doc.comments(for: record.id).first(where: { $0.id == id }) else {
             throw ToolError("The comment couldn't be added")
         }
         return .object(["comment": commentJSON(comment), "recordId": .string(record.id)])

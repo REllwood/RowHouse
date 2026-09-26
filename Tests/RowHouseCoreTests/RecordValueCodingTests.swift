@@ -214,6 +214,66 @@ struct RecordValueCodingTests {
         }
     }
 
+    @Test func numbersInStringsMeanTheSameAsNumbers() throws {
+        let f = fixture()
+        #expect(try roundTrip(f, .percent, "0.25") == 0.25)
+        #expect(try roundTrip(f, .percent, "50%") == 0.5)
+        #expect(try roundTrip(f, .duration, "5400") == 5400)
+        #expect(try roundTrip(f, .duration, "90m") == 5400)
+        #expect(try roundTrip(f, .number, " 12.5 ") == 12.5)
+        #expect(try roundTrip(f, .singleLineText, 0.1234567891) == "0.1234567891")
+    }
+
+    @Test func dateTimesKeepTheirCalendarDayInDateOnlyFields() throws {
+        let f = fixture()
+        #expect(try roundTrip(f, .date, "2026-09-26T00:00:00Z") == "2026-09-26")
+        #expect(try roundTrip(f, .date, "2026-09-26T23:59:59-11:00") == "2026-09-26")
+        #expect(try roundTrip(f, .date, "2026-09-26T09:15:00") == "2026-09-26")
+        #expect(throws: RecordValueCoding.Failure.self) { try roundTrip(f, .date, "2026-02-30T00:00:00Z") }
+
+        var options = f.field(.date).options
+        options.includeTime = true
+        f.doc.updateField(f.field(.date).id, options: options)
+        let coding = RecordValueCoding(document: f.doc)
+        let local = try coding.createRecords([["Date": "2026-09-26T09:15:00"]], in: f.table)[0]
+        let stored = f.doc.record(local)![f.field(.date).id].stringValue.flatMap(DateCoding.parseISO)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        #expect(stored.map { calendar.dateComponents([.hour, .minute], from: $0) } == DateComponents(hour: 9, minute: 15))
+    }
+
+    @Test func linksByAmbiguousTitleAreRejected() throws {
+        let f = fixture()
+        let name = f.doc.primaryField(of: f.people)!.id
+        f.doc.createRecord(in: f.people, values: [name: "Ada"])
+        let coding = RecordValueCoding(document: f.doc)
+        #expect(throws: RecordValueCoding.Failure("Link to another record: 2 records in People are called Ada; link them by record id")) {
+            try coding.createRecords([["Link to another record": ["Ada"]]], in: f.table)
+        }
+        #expect(coding.recordIDs(titled: "ada", in: f.people).count == 2)
+        #expect(coding.recordIDs(titled: "Grace", in: f.people) == [f.grace])
+    }
+
+    @Test func lenientCodingDropsWhatScriptsAlwaysDropped() throws {
+        let f = fixture()
+        var options = f.field(.link).options
+        options.singleRecordLink = true
+        f.doc.updateField(f.field(.link).id, options: options)
+        let coding = RecordValueCoding(document: f.doc, style: .scripting, typecast: true, lenient: true)
+        let id = try coding.createRecords([[
+            "Link to another record": ["Nobody", "Grace", "Ada"],
+            "Date": "someday",
+            "Name": ["a", "b"],
+            "Checkbox": ["yes"],
+        ]], in: f.table)[0]
+        let record = f.doc.record(id)!
+        #expect(f.doc.value(record, f.doc.field(f.field(.link).id)!) == .links([LinkedRecordRef(id: f.grace, title: "Grace")]))
+        #expect(record[f.field(.date).id] == .null)
+        #expect(record[f.field(.singleLineText).id] == "a, b")
+        #expect(record[f.field(.checkbox).id] == true)
+        #expect(throws: RecordValueCoding.Failure.self) { try coding.createRecords([["Number": "lots"]], in: f.table) }
+    }
+
     @Test func scriptingStyleKeepsAirtableScriptingShapes() throws {
         let f = fixture()
         let coding = RecordValueCoding(document: f.doc, style: .scripting)

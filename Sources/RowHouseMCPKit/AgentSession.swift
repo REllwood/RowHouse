@@ -14,6 +14,7 @@ final class AgentSession {
     let storage: BaseStorage
     let document: BaseDocument
     private(set) var opsSinceSnapshot = 0
+    private(set) var hasWritten = false
     private var registered = false
 
     private init(entry: LibraryEntry, storage: BaseStorage, document: BaseDocument) {
@@ -32,6 +33,7 @@ final class AgentSession {
             guard let session else { return }
             session.storage.append(ops)
             session.opsSinceSnapshot += ops.count
+            session.hasWritten = true
         }
         return session
     }
@@ -48,16 +50,27 @@ final class AgentSession {
 
     /// Call after a change: records this agent as a device of the base (so the app can name it as
     /// the author) and waits until the operations are on disk, where the app's file watcher sees them.
-    func flush() {
-        if opsSinceSnapshot > 0 && !registered {
+    /// Throws when they couldn't be saved.
+    func flush() throws(ToolError) {
+        if hasWritten && !registered {
             registered = true
             document.registerDevice(kind: DeviceInfo.agentKind)
         }
         storage.flush()
         if opsSinceSnapshot >= Self.snapshotEveryOps { writeSnapshot() }
+        if let error = storage.takeWriteError() {
+            throw ToolError("The change was made but couldn't be saved to \(entry.url.path): \(error.localizedDescription)")
+        }
+    }
+
+    /// Whether the base's folder is still there; a base moved to the Trash must not be recreated by a
+    /// late write.
+    var packageExists: Bool {
+        FileManager.default.fileExists(atPath: entry.url.appendingPathComponent("manifest.json").path)
     }
 
     func writeSnapshot() {
+        guard packageExists else { return }
         opsSinceSnapshot = 0
         storage.writeSnapshot(document.state)
         storage.flush()

@@ -47,6 +47,9 @@ struct MCPProtocolTests {
         #expect(noVersion?["error"]?["code"] == -32600)
         #expect(noVersion?["id"] == 7)
 
+        let nullID = await h.send(#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#)
+        #expect(nullID?["error"]?["code"] == -32600)
+
         let notAnObject = await h.send("42")
         #expect(notAnObject?["error"]?["code"] == -32600)
 
@@ -99,7 +102,7 @@ struct MCPProtocolTests {
         let readOnly = tools.filter { $0["annotations"]?["readOnlyHint"] == true }.compactMap { $0["name"]?.stringValue }
         #expect(Set(readOnly) == ["list_bases", "get_base_schema", "list_records", "get_record", "search_records", "list_comments", "describe_field_types"])
         let destructive = tools.filter { $0["annotations"]?["destructiveHint"] == true }.compactMap { $0["name"]?.stringValue }
-        #expect(destructive == ["delete_records"])
+        #expect(Set(destructive) == ["update_records", "delete_records", "update_table", "update_field"])
     }
 
     @Test func toolResultsCarryTextAndStructuredContent() async throws {

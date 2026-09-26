@@ -115,6 +115,70 @@ struct MCPSyncTests {
         second.cleanUp()
     }
 
+    @Test func eachAssistantKeepsItsOwnSlot() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rowhouse-mcp-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let claude = MCPHarness(root: root)
+        _ = await claude.initialize(client: "claude-code")
+        #expect(claude.server.deviceID == "devHost-agent0")
+        claude.server.shutdown()
+
+        let codex = MCPHarness(root: root)
+        #expect(codex.server.deviceID == "devHost-agent0")
+        _ = await codex.initialize(client: "codex-mcp-client")
+        #expect(codex.server.deviceID == "devHost-agent1")
+        codex.server.shutdown()
+
+        let claudeAgain = MCPHarness(root: root)
+        _ = await claudeAgain.initialize(client: "claude-code")
+        #expect(claudeAgain.server.deviceID == "devHost-agent0")
+        let secondClaude = MCPHarness(root: root)
+        _ = await secondClaude.initialize(client: "claude-code")
+        #expect(secondClaude.server.deviceID == "devHost-agent2")
+        let codexAgain = MCPHarness(root: root)
+        _ = await codexAgain.initialize(client: "codex-mcp-client")
+        #expect(codexAgain.server.deviceID == "devHost-agent1")
+        for h in [claudeAgain, secondClaude, codexAgain] { h.server.shutdown() }
+    }
+
+    @Test func movedAndTrashedBasesAreFollowedNotRecreated() async throws {
+        let h = MCPHarness()
+        defer { h.cleanUp() }
+        _ = await h.call("create_base", ["name": "Wanderer"])
+        _ = await h.call("create_records", ["base": "Wanderer", "table": "Table 1", "records": [["fields": ["Name": "Before"]]]])
+        let original = try entry(in: h.libraryURL).url
+        let moved = h.libraryURL.appendingPathComponent("Renamed.rowhouse", isDirectory: true)
+        try FileManager.default.moveItem(at: original, to: moved)
+
+        _ = await h.call("create_records", ["base": "Wanderer", "table": "Table 1", "records": [["fields": ["Name": "After"]]]])
+        #expect(!FileManager.default.fileExists(atPath: original.path))
+        let listed = await h.call("list_records", ["base": "Wanderer", "table": "Table 1", "search": "After"])
+        #expect(listed["total"] == 1)
+
+        let trash = h.root.appendingPathComponent("Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: moved, to: trash.appendingPathComponent("Renamed.rowhouse"))
+        #expect(await h.call("list_bases")["bases"] == [])
+        h.server.shutdown()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: h.libraryURL.path).isEmpty)
+    }
+
+    @Test func changesThatCantBeSavedAreReported() async throws {
+        let h = MCPHarness()
+        let base = await h.call("create_base", ["name": "Locked"])
+        let folder = try entry(in: h.libraryURL).url.appendingPathComponent("devices/\(h.server.deviceID)")
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        for file in files { try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            for file in files { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+            h.cleanUp()
+        }
+        let message = await h.callError("create_records", ["base": base["id"] ?? .null, "table": "Table 1", "records": [["fields": ["Name": "Lost"]]]])
+        #expect(message.contains("couldn't be saved"))
+    }
+
     @Test func anUnreadableLibraryExplainsHowToGrantAccess() async throws {
         let h = MCPHarness()
         defer {

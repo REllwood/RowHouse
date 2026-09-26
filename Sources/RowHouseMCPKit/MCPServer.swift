@@ -36,7 +36,7 @@ public final class MCPServer {
 
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
-        let library = configuration.libraryRoot.map { Library(rootURL: $0) } ?? Library(defaults: Self.appDefaults)
+        let library = Library(rootURL: configuration.libraryRoot ?? Self.libraryRoot(defaults: Self.appDefaults))
         let agent = AgentIdentity(hostDeviceID: configuration.hostDeviceID, lockDirectory: configuration.lockDirectory)
         workspace = Workspace(library: library, agent: agent, deviceName: Self.defaultDeviceName)
         Log.info("library \(library.rootURL.path), device \(agent.deviceID)")
@@ -54,6 +54,34 @@ public final class MCPServer {
         let domain = "com.rellwood.RowHouse"
         if Bundle.main.bundleIdentifier == domain { return .standard }
         return UserDefaults(suiteName: domain) ?? .standard
+    }
+
+    /// The app's library folder. When macOS privacy settings stop this process from even looking at
+    /// iCloud Drive, the iCloud folder is kept anyway, so tools explain how to grant access instead of
+    /// quietly showing a different, local library.
+    static func libraryRoot(defaults: UserDefaults) -> URL {
+        let resolved = Library.resolveRoot(defaults: defaults)
+        let override = ProcessInfo.processInfo.environment["ROWHOUSE_LIBRARY_PATH"] ?? ""
+        let chosen = defaults.string(forKey: Library.customPathKey) ?? ""
+        guard override.isEmpty, chosen.isEmpty, Library.iCloudDriveRoot == nil else { return resolved }
+        let cloudDocs = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
+        do {
+            _ = try FileManager.default.attributesOfItem(atPath: cloudDocs.path)
+        } catch {
+            if isPermissionError(error) { return cloudDocs.appendingPathComponent("RowHouse", isDirectory: true) }
+        }
+        return resolved
+    }
+
+    private nonisolated static func isPermissionError(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let e = current {
+            if e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoPermissionError { return true }
+            if e.domain == NSPOSIXErrorDomain && (e.code == Int(EPERM) || e.code == Int(EACCES)) { return true }
+            current = e.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     /// The version of the RowHouse.app this helper ships in.
@@ -92,7 +120,7 @@ public final class MCPServer {
         }
         let id = object["id"]
         if let id, !Self.isValidID(id) {
-            return JSONRPC.error(id: .null, RPCError(RPCError.invalidRequest, "Invalid request: id must be a string or a number"))
+            return JSONRPC.error(id: .null, RPCError(RPCError.invalidRequest, "Invalid request: id must be a string or a number, not null"))
         }
         guard object["jsonrpc"]?.stringValue == "2.0" else {
             return JSONRPC.error(id: id ?? .null, RPCError(RPCError.invalidRequest, "Invalid request: jsonrpc must be \"2.0\""))
@@ -121,7 +149,7 @@ public final class MCPServer {
 
     private static func isValidID(_ id: JSONValue) -> Bool {
         switch id {
-        case .string, .number, .null: true
+        case .string, .number: true
         default: false
         }
     }
@@ -154,8 +182,7 @@ public final class MCPServer {
         let requested = params?["protocolVersion"]?.stringValue
         protocolVersion = requested.flatMap { Self.supportedProtocolVersions.contains($0) ? $0 : nil } ?? Self.supportedProtocolVersions[0]
         if let info = params?["clientInfo"] {
-            let name = Self.friendlyClientName(name: info["name"]?.stringValue, title: info["title"]?.stringValue)
-            workspace.rename(to: "\(name) (MCP)")
+            workspace.introduce(client: Self.friendlyClientName(name: info["name"]?.stringValue, title: info["title"]?.stringValue))
         }
         return .object([
             "protocolVersion": .string(protocolVersion),

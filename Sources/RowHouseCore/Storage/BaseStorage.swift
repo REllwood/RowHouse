@@ -52,6 +52,7 @@ public final class BaseStorage: @unchecked Sendable {
     /// Set when this device's snapshot exists but couldn't be read. Until it's recovered we never
     /// write a snapshot or compact, because the file may hold history the logs no longer have.
     private var ownSnapshotUnreadable = false
+    private var lastWriteError: Error?
     /// Log segments seen per remote device, so a remote snapshot is only merged when that device
     /// has compacted segments away (otherwise its logs already delivered every change).
     private var seenSegments: [String: Set<String>] = [:]
@@ -232,6 +233,7 @@ public final class BaseStorage: @unchecked Sendable {
                 segmentOps += count
                 logOffsets[deviceID + "/" + segmentURL!.lastPathComponent, default: 0] += UInt64(data.count)
             } catch {
+                lastWriteError = error
                 NSLog("RowHouse: failed to append to log: \(error)")
             }
         }
@@ -306,6 +308,7 @@ public final class BaseStorage: @unchecked Sendable {
                     ownSnapshotWritten = now
                 }
             } catch {
+                lastWriteError = error
                 NSLog("RowHouse: failed to write snapshot: \(error)")
             }
         }
@@ -314,6 +317,14 @@ public final class BaseStorage: @unchecked Sendable {
     /// Blocks until queued writes have finished.
     public func flush() {
         queue.sync {}
+    }
+
+    /// The latest failure to append to this device's log or write its snapshot, cleared once read.
+    public func takeWriteError() -> Error? {
+        queue.sync {
+            defer { lastWriteError = nil }
+            return lastWriteError
+        }
     }
 
     private static func newSegmentName() -> String {

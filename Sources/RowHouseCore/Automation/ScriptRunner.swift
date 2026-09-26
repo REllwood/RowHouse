@@ -266,7 +266,7 @@ final class ScriptBridge: @unchecked Sendable {
                 guard document.table(tableID) != nil else { return error("No table \(tableID)") }
                 guard let fields = (try? JSONValue.parse(json))?.objectValue else { return error("Fields must be an object") }
                 do throws(RecordValueCoding.Failure) {
-                    let ids = try RecordValueCoding(document: document, style: .scripting, typecast: true)
+                    let ids = try RecordValueCoding(document: document, style: .scripting, typecast: true, lenient: true)
                         .createRecords([fields], in: tableID, origin: origin)
                     return JSONValue.string(ids.first ?? "").jsonString
                 } catch let failure {
@@ -279,7 +279,7 @@ final class ScriptBridge: @unchecked Sendable {
                 guard let r = document.record(recordID), r.tableID == tableID else { return error("No record \(recordID) in this table") }
                 guard let fields = (try? JSONValue.parse(json))?.objectValue else { return error("Fields must be an object") }
                 do throws(RecordValueCoding.Failure) {
-                    try RecordValueCoding(document: document, style: .scripting, typecast: true)
+                    try RecordValueCoding(document: document, style: .scripting, typecast: true, lenient: true)
                         .updateRecords([(recordID, fields)], in: tableID, actionName: "Script Update", origin: origin)
                     return "null"
                 } catch let failure {

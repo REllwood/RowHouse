@@ -297,7 +297,8 @@ enum FieldOptionsCoding {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { throw ToolError("\(field): option names can't be empty") }
             guard seen.insert(trimmed.lowercased()).inserted else { throw ToolError("\(field): option \(trimmed) is listed twice") }
-            let match = existing.first { $0.id == id } ?? existing.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+            let unused = existing.filter { choice in !out.contains { $0.id == choice.id } }
+            let match = unused.first { $0.id == id } ?? unused.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
             out.append(SelectChoice(id: match?.id ?? RowID.choice(), name: trimmed, color: color ?? match?.color ?? .cycling(out.count)))
         }
         return out

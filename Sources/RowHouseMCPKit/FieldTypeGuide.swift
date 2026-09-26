@@ -56,7 +56,7 @@ enum FieldTypeGuide {
         .checkbox: ("true when checked; unchecked is left out (false with get_record)", "true or false"),
         .singleSelect: ("option name, e.g. \"Done\"", "option name (or id). Unknown names are an error unless typecast is true, which adds the option"),
         .multipleSelects: ("array of option names", "array of option names (or ids), or one comma-separated string. typecast adds unknown options"),
-        .date: ("\"YYYY-MM-DD\", or an ISO-8601 date-time (UTC) when the field includes a time", "\"YYYY-MM-DD\", an ISO-8601 date-time, or text such as \"tomorrow\""),
+        .date: ("\"YYYY-MM-DD\", or an ISO-8601 date-time (UTC) when the field includes a time", "\"YYYY-MM-DD\", an ISO-8601 date-time (without a zone it's the user's local time; a date-only field keeps the day as written), or text such as \"tomorrow\""),
         .attachment: ("array of {id, filename, size, type, url (file:// URL of the file inside the base), width, height}", "read-only here; add files in RowHouse"),
         .link: ("array of {id, name} for the linked records", "array of record ids or primary field values of existing records in the linked table (never creates records)"),
         .lookup: ("array of the looked-up values from linked records, in the target field's format", "read-only (computed)"),

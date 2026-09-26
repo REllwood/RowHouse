@@ -25,7 +25,8 @@ public final class Library {
 
     @ObservationIgnored private var watcher: DirectoryWatcher?
     @ObservationIgnored private let defaults: UserDefaults
-    static let customPathKey = "RowHouseLibraryPath"
+    /// Preference key for the folder chosen in Settings (absent means iCloud Drive).
+    public static let customPathKey = "RowHouseLibraryPath"
 
     public convenience init(defaults: UserDefaults = .standard) {
         self.init(rootURL: Library.resolveRoot(defaults: defaults), defaults: defaults)
