@@ -18,6 +18,21 @@ public struct TableModel: Identifiable, Equatable, Sendable {
     public var primaryFieldID: String?
     public var description: String
     public var icon: String?
+    public var recordTemplates: [RecordTemplate] = []
+}
+
+/// Preset values for new records ("record templates").
+public struct RecordTemplate: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    /// Field id → stored value.
+    public var values: [String: JSONValue]
+
+    public init(id: String = RowID.make("rtp"), name: String, values: [String: JSONValue]) {
+        self.id = id
+        self.name = name
+        self.values = values
+    }
 }
 
 public struct FieldModel: Identifiable, Equatable, Sendable {

@@ -859,6 +859,30 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         }
     }
 
+    func addRecord(from template: RecordTemplate, after afterID: String? = nil) {
+        commitEditing()
+        let id = document.createRecord(from: template, in: view.tableID, after: afterID)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let row = self.rows.firstIndex(where: { $0.recordID == id }) else { return }
+            self.setCursor(GridPosition(row: row, column: 0))
+        }
+    }
+
+    private func saveTemplate(from recordID: String) {
+        let alert = NSAlert()
+        alert.messageText = "Save as Record Template"
+        alert.informativeText = "New records created from this template start with this record's values."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "Template name"
+        field.stringValue = document.primaryTitle(recordID: recordID)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        document.saveTemplate(named: field.stringValue.trimmingCharacters(in: .whitespaces), from: recordID)
+    }
+
     /// New records pick up simple "is" filter values so they stay visible in the filtered view.
     private func initialValuesFromFilter() -> [String: JSONValue] {
         guard let filter = view.config.filter, filter.conjunction == .and else { return [:] }
@@ -1174,6 +1198,20 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         })
         menu.addItem(ActionMenuItem(targets.count > 1 ? "Duplicate \(targets.count) records" : "Duplicate record", image: "plus.square.on.square") { [weak self] in
             _ = self?.document.duplicateRecords(targets)
+        })
+        let templates = document.table(view.tableID)?.recordTemplates ?? []
+        if !templates.isEmpty {
+            let item = NSMenuItem(title: "New record from template", action: nil, keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
+            let sub = NSMenu()
+            for template in templates {
+                sub.addItem(ActionMenuItem(template.name, image: nil) { [weak self] in self?.addRecord(from: template, after: rid) })
+            }
+            item.submenu = sub
+            menu.addItem(item)
+        }
+        menu.addItem(ActionMenuItem("Save as template…", image: "doc.badge.gearshape") { [weak self] in
+            self?.saveTemplate(from: rid)
         })
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem("Copy", image: "doc.on.doc") { [weak self] in self?.copySelection() })

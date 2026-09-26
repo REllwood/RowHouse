@@ -48,12 +48,36 @@ struct TableScreen: View {
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 if view?.type != .form && view?.type != .chart {
-                    Button {
-                        commandTarget.addRecord()
-                    } label: {
-                        Label("Add Record", systemImage: "plus")
+                    let templates = document.table(tableID)?.recordTemplates ?? []
+                    if templates.isEmpty || view?.type != .grid {
+                        Button {
+                            commandTarget.addRecord()
+                        } label: {
+                            Label("Add Record", systemImage: "plus")
+                        }
+                        .help("Add a record (⇧↩ in the grid)")
+                    } else {
+                        Menu {
+                            Button("Blank Record") { commandTarget.addRecord() }
+                            Section("Templates") {
+                                ForEach(templates) { template in
+                                    Button(template.name) { commandTarget.addRecordFromTemplate(template) }
+                                }
+                            }
+                            Menu("Delete Template") {
+                                ForEach(templates) { template in
+                                    Button(template.name, role: .destructive) {
+                                        document.setTemplates(templates.filter { $0.id != template.id }, in: tableID)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Label("Add Record", systemImage: "plus")
+                        } primaryAction: {
+                            commandTarget.addRecord()
+                        }
+                        .help("Add a record — hold for templates (⇧↩ in the grid)")
                     }
-                    .help("Add a record (⇧↩ in the grid)")
                 }
             }
         }

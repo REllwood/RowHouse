@@ -175,3 +175,25 @@ struct BaseSearchTests {
         #expect(doc.search("   ").isEmpty)
     }
 }
+
+@Suite("Record templates") @MainActor
+struct RecordTemplateTests {
+    @Test func templatesCaptureValuesAndCreateRecords() {
+        let doc = TestSupport.document()
+        let t = doc.createTable(name: "Bugs")
+        let status = doc.field(named: "Status", in: t)!
+        let notes = doc.field(named: "Notes", in: t)!
+        let r = doc.records(in: t)[0].id
+        doc.updateRecord(r, values: [status.id: .string(status.choice(named: "Todo")!.id), notes.id: "Steps to reproduce:\n1."])
+        let template = doc.saveTemplate(named: "Bug report", from: r)!
+        #expect(doc.table(t)!.recordTemplates.map(\.name) == ["Bug report"])
+        let created = doc.createRecord(from: template, in: t)
+        #expect(doc.displayString(doc.record(created)!, status) == "Todo")
+        #expect(doc.record(created)![notes.id] == "Steps to reproduce:\n1.")
+        doc.deleteField(notes.id)
+        let again = doc.createRecord(from: doc.table(t)!.recordTemplates[0], in: t)
+        #expect(doc.record(again)![notes.id] == .null)
+        doc.setTemplates([], in: t)
+        #expect(doc.table(t)!.recordTemplates.isEmpty)
+    }
+}

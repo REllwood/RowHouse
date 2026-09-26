@@ -25,6 +25,7 @@ extension FocusedValues {
 @MainActor
 final class GridCommandTarget {
     var addRecord: () -> Void = {}
+    var addRecordFromTemplate: (RecordTemplate) -> Void = { _ in }
     var expandSelection: () -> Void = {}
     var deleteSelection: () -> Void = {}
     var exportCSV: () -> Void = {}

@@ -150,6 +150,30 @@ extension BaseDocument {
         return newTableID
     }
 
+    /// Saves a record's editable values as a template for new records in its table.
+    @discardableResult
+    public func saveTemplate(named name: String, from recordID: String) -> RecordTemplate? {
+        guard let r = record(recordID), let table = table(r.tableID) else { return nil }
+        var values: [String: JSONValue] = [:]
+        for f in fields(in: r.tableID) where f.isEditable && !f.isInverseLink {
+            if let v = r.cells[f.id], !v.isEmptyCell { values[f.id] = v }
+        }
+        let template = RecordTemplate(name: name.isEmpty ? "Template" : name, values: values)
+        setTemplates(table.recordTemplates + [template], in: table.id)
+        return template
+    }
+
+    public func setTemplates(_ templates: [RecordTemplate], in tableID: String) {
+        commit([Mutation(.table, tableID, ["recordTemplates": JSONValue(encoding: templates)])], actionName: "Edit Record Templates")
+    }
+
+    /// Creates a record from a template; values for fields that no longer exist are skipped.
+    @discardableResult
+    public func createRecord(from template: RecordTemplate, in tableID: String, after afterID: String? = nil) -> String {
+        let values = template.values.filter { key, _ in field(key).map { $0.tableID == tableID && $0.isEditable } ?? false }
+        return createRecord(in: tableID, values: values, after: afterID)
+    }
+
     public func uniqueTableName(_ base: String) -> String {
         let names = Set(tables.map { $0.name.lowercased() })
         return uniqueName(base, taken: names)

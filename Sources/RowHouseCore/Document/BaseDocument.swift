@@ -485,7 +485,8 @@ public final class BaseDocument {
             order: e["order"]?.numberValue ?? 0,
             primaryFieldID: e["primaryField"]?.stringValue,
             description: e["description"]?.stringValue ?? "",
-            icon: e["icon"]?.stringValue
+            icon: e["icon"]?.stringValue,
+            recordTemplates: e["recordTemplates"]?.decode([RecordTemplate].self) ?? []
         )
     }
 
