@@ -112,7 +112,16 @@ public final class Library {
 
     public func refresh() {
         let fm = FileManager.default
-        let urls = (try? fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        let urls: [URL]
+        do {
+            urls = try fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+            if lastError != nil { lastError = nil }
+        } catch {
+            // Usually macOS privacy settings: the app hasn't been allowed into iCloud Drive yet.
+            let message = "RowHouse can't open \(rootURL.path): \(error.localizedDescription)"
+            if lastError != message { lastError = message }
+            urls = []
+        }
         var found: [LibraryEntry] = []
         var seen = Set<String>()
         for url in urls where url.pathExtension == BaseStorage.packageExtension {

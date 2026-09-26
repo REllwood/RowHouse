@@ -69,7 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        MainActor.assumeIsolated { AppModel.shared.pollAll() }
+        MainActor.assumeIsolated {
+            if AppModel.shared.library.lastError != nil { AppModel.shared.library.refresh() }
+            AppModel.shared.pollAll()
+        }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {

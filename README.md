@@ -281,7 +281,7 @@ You need Xcode 16 or later.
 ```bash
 git clone https://github.com/REllwood/RowHouse.git
 cd RowHouse
-swift test                      # 235 tests: formulas, sync, queries, automations, scripts, importers
+swift test                      # 236 tests: formulas, sync, queries, automations, scripts, importers
 CONFIG=debug scripts/build-app.sh
 open .build/app/RowHouse.app
 ```
