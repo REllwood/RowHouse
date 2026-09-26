@@ -105,20 +105,12 @@ To sync between Macs, turn on iCloud Drive on each one. RowHouse saves bases to 
 ## How it works
 
 <p align="center">
-  <img src=".github/assets/how-it-works.gif" alt="An animated map of RowHouse's source code: 2,297 symbols scatter and settle into islands for views, BaseDocument, formulas, sync, automations, the MCP server and importers, then an edit is traced from the grid through BaseDocument, formulas, the change log and sync to automations and AI assistants" width="100%">
+  <img src=".github/assets/architecture.gif" alt="Animated architecture diagram: the RowHouse UI sends edits to BaseDocument, which hands change sets to automations and appends ops to BaseStorage; BaseStorage syncs to iCloud Drive, as does the rowhouse-mcp server that Claude and Codex call; iCloud Drive merges into your other Macs" width="100%">
 </p>
 
-The map above is RowHouse's own source code, drawn with [graphify](https://github.com/Graphify-Labs/graphify). Each dot is a type, function or file, and each line is a call or reference between them. The dots settle into islands for the parts of the app, and then the path of a single edit lights up across them:
+When you edit a record, `BaseDocument` applies the change, recomputes formulas, lookups and rollups, and passes the change set to the automation engine. `BaseStorage` appends the change to this Mac's own log, iCloud Drive syncs that log, and each of your other Macs merges it in. Claude and Codex go through the MCP server, which writes to iCloud Drive as a device of its own.
 
-1. You edit a record in the grid or another view.
-2. `BaseDocument` applies the change and records undo.
-3. Formulas, lookups and rollups recompute.
-4. The change is appended to this Mac's own log, stamped with a hybrid logical clock.
-5. iCloud Drive syncs the log, and every other Mac merges it field by field.
-6. Automations run once, on the Mac where the change was made.
-7. Claude and Codex edit through the MCP server, as a device of their own.
-
-The code is four Swift modules: a formula engine (`RowHouseFormula`), a core library with no UI (`RowHouseCore`), the MCP server (`RowHouseMCPKit`) and the Mac app.
+The code is four Swift modules: a formula engine (`RowHouseFormula`), a core library with no UI (`RowHouseCore`), the MCP server (`RowHouseMCPKit`) and the Mac app. The diagrams in this README are animated with [GravelGraph](https://www.gravelgraph.com).
 
 ### Plain files, one writer each
 
@@ -149,19 +141,9 @@ Every property of every table, field, view, record and automation is a *last-wri
 - Deleting is a `_deleted` flag, so a delete and a concurrent edit resolve predictably.
 - The inverse side of a link is computed from the owning side, so two-way links can never disagree.
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant A as MacBook · RowHouse
-  participant D as iCloud Drive
-  participant B as iMac · RowHouse
-  A->>A: Edit Status → "Done"<br/>op {ts: 1790388701001-0-devA, set: {Status: "Done"}}
-  A->>D: append line to devices/devA/log-….jsonl
-  A->>A: automations on this Mac react to the local edit
-  D-->>B: iCloud syncs the file
-  B->>B: FSEvents fires → read only the new lines → merge
-  B->>B: grid updates live, no automations re-run
-```
+<p align="center">
+  <img src=".github/assets/sync-flow.gif" alt="Animated sync flow: 1 the MacBook appends the edit to its own op log, 2 automations run once on the MacBook, 3 the log uploads to iCloud Drive, 4 FSEvents tells the iMac, which merges field by field, 5 the iMac's grid updates live" width="610">
+</p>
 
 <p align="center">
   <img src=".github/assets/sync.gif" alt="Edits made on another Mac appearing live in RowHouse" width="100%">
@@ -221,12 +203,9 @@ command = "/Applications/RowHouse.app/Contents/MacOS/rowhouse-mcp"
 
 Tables, fields and records can be named instead of using ids. Values use the same JSON shapes as Airtable's REST API.
 
-```mermaid
-flowchart LR
-  AI["Claude Code · Codex · Claude Desktop"] -- "MCP over stdio" --> H["rowhouse-mcp<br/>(its own device: …-agent0)"]
-  H -- "append ops" --> LOG[("devices/…-agent0/log-….jsonl")]
-  LOG -- "FSEvents · iCloud Drive" --> APP["RowHouse on your Macs<br/>merge live · run automations on the host"]
-```
+<p align="center">
+  <img src=".github/assets/mcp-flow.gif" alt="Animated MCP flow: Claude or Codex call rowhouse-mcp over stdio, which appends ops to its own log in iCloud Drive; RowHouse merges them within a second and the automation host runs record triggers" width="320">
+</p>
 
 The server writes to your bases the same way another Mac does: into its own change log, as its own device. Its edits show up in the app within a second, sync to your other Macs, and appear in record history as "Claude Code (MCP)" or "Codex (MCP)". Record automations run for them on the base's automation host. Two assistants running at once each get their own device folder, so they never write to the same file.
 
