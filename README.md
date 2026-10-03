@@ -98,7 +98,7 @@ There's no server and no account. Each base is a folder of plain files in **iClo
 2. Open it and drag **RowHouse** into **Applications**.
 3. Open RowHouse and choose a template, or import a CSV or an Airtable base.
 
-RowHouse needs **macOS 14 Sonoma or later** and runs natively on Apple silicon and Intel Macs. Releases are signed with a Developer ID. If macOS says it can't verify the app the first time you open it, go to **System Settings › Privacy & Security** and click **Open Anyway**.
+RowHouse needs **macOS 14 Sonoma or later** and runs natively on Apple silicon and Intel Macs. Current downloads are signed with a Developer ID and notarised by Apple. If you downloaded an earlier archive that macOS couldn't verify, download the current DMG or ZIP from the release page.
 
 To sync between Macs, turn on iCloud Drive on each one. RowHouse saves bases to **iCloud Drive › RowHouse** automatically. If you'd rather not use iCloud Drive, choose **On this Mac only** or any folder in **Settings › Storage**. A Dropbox or Syncthing folder works too.
 
@@ -363,7 +363,7 @@ CONFIG=debug scripts/build-app.sh
 open .build/app/RowHouse.app
 ```
 
-`scripts/release.sh` builds a universal, signed DMG and zip into `.build/release-artifacts/`. Set `SIGN_IDENTITY` to a Developer ID identity and `NOTARY_PROFILE` to a `notarytool` keychain profile to sign and notarise. For development, `ROWHOUSE_LIBRARY_PATH` points the app at a different folder, and `ROWHOUSE_DEVICE_ID` lets you simulate a second Mac.
+`scripts/release.sh` builds a universal, signed and notarised DMG and zip into `.build/release-artifacts/`. Both `SIGN_IDENTITY` (a Developer ID Application identity) and `NOTARY_PROFILE` (an existing `notarytool` keychain profile) are required. The script checks Apple’s acceptance, staples the app before packaging, and verifies both downloads with Gatekeeper. The previous artifacts are kept in `.build/release-artifacts-previous/`. GitHub releases require all six secrets listed in `.github/workflows/release.yml`; missing credentials stop the workflow before building. For development, `ROWHOUSE_LIBRARY_PATH` points the app at a different folder, and `ROWHOUSE_DEVICE_ID` lets you simulate a second Mac.
 
 | Module | What's in it |
 |---|---|

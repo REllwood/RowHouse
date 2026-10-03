@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds RowHouse.app into .build/app/ (always the same path; each build replaces the last).
+# Builds RowHouse.app into .build/app/; the previous bundle moves to .build/app-previous/.
 # The app bundles the rowhouse-mcp helper (Contents/MacOS/rowhouse-mcp) for AI assistants.
 #
 #   scripts/build-app.sh                 # universal release build, ad-hoc signed
@@ -24,7 +24,12 @@ else
   BIN_DIR="$(swift build -c debug --show-bin-path)"
 fi
 
-rm -rf "$APP"
+# Keep exactly one previous bundle, at a fixed path, replaced on every build.
+if [[ -e "$APP" ]]; then
+  rm -rf .build/app-previous
+  mkdir -p .build/app-previous
+  mv "$APP" .build/app-previous/RowHouse.app
+fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/RowHouse" "$APP/Contents/MacOS/RowHouse"
 cp "$BIN_DIR/rowhouse-mcp" "$HELPER"

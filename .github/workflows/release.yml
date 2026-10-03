@@ -1,7 +1,7 @@
 name: Release
 
 # Builds a universal release and attaches it to a GitHub release. Signing and notarisation
-# happen only when these repository secrets exist:
+# require all of these repository secrets:
 #   MACOS_CERTIFICATE          base64 of a Developer ID Application .p12
 #   MACOS_CERTIFICATE_PASSWORD password for the .p12
 #   MACOS_SIGN_IDENTITY        e.g. "Developer ID Application: Name (TEAMID)"
@@ -20,21 +20,39 @@ jobs:
   release:
     runs-on: macos-15
     timeout-minutes: 45
-    env:
-      HAS_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
-      HAS_NOTARY: ${{ secrets.NOTARY_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require signing and notarisation credentials
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD MACOS_SIGN_IDENTITY NOTARY_APPLE_ID NOTARY_TEAM_ID NOTARY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required repository secret: $name"
+              exit 1
+            fi
+          done
       - name: Select Xcode
         run: |
-          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          XCODE=$( { ls -d /Applications/Xcode_26*.app 2>/dev/null || true; } | sort -V | tail -1)
           if [ -z "$XCODE" ]; then XCODE=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1); fi
           sudo xcode-select -s "$XCODE"
       - name: Check version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          test "v$(tr -d '[:space:]' < VERSION)" = "${{ inputs.tag }}"
+          test "v$(tr -d '[:space:]' < VERSION)" = "$RELEASE_TAG"
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          fi
       - name: Import signing certificate
-        if: env.HAS_CERT == 'true'
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -48,20 +66,22 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
       - name: Store notary credentials
-        if: env.HAS_NOTARY == 'true'
         env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
           xcrun notarytool store-credentials rowhouse-notary \
-            --apple-id "${{ secrets.NOTARY_APPLE_ID }}" --team-id "${{ secrets.NOTARY_TEAM_ID }}" --password "$NOTARY_PASSWORD"
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD"
       - name: Build release artifacts
         env:
           SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          NOTARY_PROFILE: ${{ env.HAS_NOTARY == 'true' && 'rowhouse-notary' || '' }}
+          NOTARY_PROFILE: rowhouse-notary
         run: scripts/release.sh
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          gh release create "${{ inputs.tag }}" .build/release-artifacts/*.dmg .build/release-artifacts/*.zip .build/release-artifacts/SHA256SUMS.txt \
-            --title "RowHouse ${{ inputs.tag }}" --generate-notes
+          gh release create "$RELEASE_TAG" .build/release-artifacts/*.dmg .build/release-artifacts/*.zip .build/release-artifacts/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "RowHouse $RELEASE_TAG" --generate-notes
