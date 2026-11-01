@@ -19,7 +19,9 @@ HELPER="$APP/Contents/MacOS/rowhouse-mcp"
 if [[ "$CONFIG" == "release" ]]; then
   swift build -c release --arch arm64 --arch x86_64 --product RowHouse
   swift build -c release --arch arm64 --arch x86_64 --product rowhouse-mcp
-  BIN_DIR=".build/apple/Products/Release"
+  # Ask SwiftPM where it put the binaries. Swift 6.4 moved universal builds from .build/apple to
+  # .build/out, and a fixed path silently copied an old build left behind in the previous folder.
+  BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
 else
   swift build -c debug --product RowHouse
   swift build -c debug --product rowhouse-mcp
