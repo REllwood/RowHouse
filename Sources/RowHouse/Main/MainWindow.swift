@@ -161,6 +161,7 @@ extension MainWindow {
         case "findReplace": if let base { state.findReplaceTable = BaseSheetTarget(baseID: base, tableID: table) }
         case "duplicates": if let base { state.duplicatesTable = BaseSheetTarget(baseID: base, tableID: table) }
         case "settings": openSettings()
+        case "checkForUpdates": UpdateChecker.shared.check(.settings)
         case "close":
             state.newBaseSheet = false
             state.csvImportSheet = false

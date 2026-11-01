@@ -148,6 +148,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(row)
         }
         menu.addItem(.separator())
+        menu.addItem(ActionMenuItem("Check for Updates…", image: nil) {
+            NSApp.activate(ignoringOtherApps: true)
+            UpdateChecker.shared.check(.menu)
+        })
         menu.addItem(ActionMenuItem("Settings…", image: nil) {
             NSApp.activate(ignoringOtherApps: true)
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)

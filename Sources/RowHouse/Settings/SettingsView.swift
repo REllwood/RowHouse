@@ -4,17 +4,26 @@ import SwiftUI
 import UserNotifications
 
 struct SettingsView: View {
+    /// Settings reopen on the tab that was open last.
+    @AppStorage("RowHouse.settings.tab") private var tab = "storage"
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             StorageSettings()
                 .tabItem { Label("Storage", systemImage: "icloud") }
+                .tag("storage")
             AutomationSettings()
                 .tabItem { Label("Automations", systemImage: "bolt") }
+                .tag("automations")
             AISettings().tabItem { Label("Claude AI", systemImage: "sparkle") }
+                .tag("ai")
             WebhookSettings().tabItem { Label("Webhooks", systemImage: "point.3.connected.trianglepath.dotted") }
+                .tag("webhooks")
             AssistantSettings().tabItem { Label("AI Assistants", systemImage: "sparkles") }
+                .tag("assistants")
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag("general")
         }
         .frame(width: 560)
         .padding(20)
@@ -186,15 +195,69 @@ private struct LaunchAtLoginToggle: View {
     }
 }
 
+/// The result of the latest update check, with a button to check again or download a newer version.
+private struct UpdateStatusRow: View {
+    private let checker = UpdateChecker.shared
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            if checker.status == .checking {
+                ProgressView().controlSize(.small)
+            }
+            if case .available(let version, let page) = checker.status {
+                Button("Download \(version)") { NSWorkspace.shared.open(page) }
+                    .buttonStyle(.borderedProminent)
+            }
+            Button("Check for Updates") { checker.check(.settings) }
+                .disabled(checker.status == .checking)
+        }
+    }
+
+    private var title: String {
+        switch checker.status {
+        case .idle: "Updates"
+        case .checking: "Checking for updates…"
+        case .upToDate: "RowHouse is up to date"
+        case .available(let version, _): "RowHouse \(version) is available"
+        case .failed: "Could not check for updates"
+        }
+    }
+
+    private var detail: String? {
+        switch checker.status {
+        case .available: "You have \(AppInfo.version)."
+        case .failed(let message): message
+        case .checking: nil
+        case .idle, .upToDate: lastChecked
+        }
+    }
+
+    private var lastChecked: String? {
+        guard let date = checker.lastChecked else { return nil }
+        if Date().timeIntervalSince(date) < 60 { return "Checked just now" }
+        return "Last checked \(date.formatted(.relative(presentation: .named)))"
+    }
+}
+
 private struct GeneralSettings: View {
     @AppStorage(UpdateChecker.autoCheckKey) private var autoCheck = true
 
     var body: some View {
         Form {
             Section("Updates") {
-                Toggle("Check for updates automatically", isOn: $autoCheck)
                 LabeledContent("Version", value: "\(AppInfo.version) (\(AppInfo.build))")
-                Button("Check Now") { UpdateChecker.shared.check(userInitiated: true) }
+                UpdateStatusRow()
+                Toggle("Check for updates automatically", isOn: $autoCheck)
             }
             Section("About") {
                 LabeledContent("Source code") {
