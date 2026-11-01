@@ -11,7 +11,26 @@ struct ViewBar: View {
     @State private var nameText = ""
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        // Full labels when they fit, icon-only buttons for inactive settings when space is tight, and
+        // scrolling only as a last resort, so nothing is cut off at the edge.
+        ViewThatFits(in: .horizontal) {
+            controls.environment(\.compactViewBar, false)
+            controls.environment(\.compactViewBar, true)
+            ScrollView(.horizontal, showsIndicators: false) {
+                controls.environment(\.compactViewBar, true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: Theme.barHeight)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .alert("Rename View", isPresented: $renaming) {
+            TextField("Name", text: $nameText)
+            Button("Rename") { document.renameView(view.id, to: nameText) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private var controls: some View {
         HStack(spacing: 4) {
             Menu {
                 Button("Rename View…") {
@@ -28,14 +47,20 @@ struct ViewBar: View {
                 Button("Delete View", role: .destructive) { document.deleteView(view.id) }
                     .disabled(document.views(in: view.tableID).count <= 1)
             } label: {
-                Label(view.name, systemImage: view.config.isLocked ? "lock.fill" : view.type.symbolName)
-                    .font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 6) {
+                    Image(systemName: view.config.isLocked ? "lock.fill" : view.type.symbolName)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text(view.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                }
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .padding(.trailing, 6)
+            .padding(.trailing, 4)
 
-            Divider().frame(height: 16)
+            Divider().frame(height: 16).padding(.horizontal, 4)
 
             if view.config.isLocked {
                 Label("Locked", systemImage: "lock")
@@ -56,14 +81,14 @@ struct ViewBar: View {
                     }
                 }
                 if view.type.supportsGrouping {
-                    BarButton(title: groupTitle, systemImage: "rectangle.3.group", active: !(view.config.groups ?? []).isEmpty, tint: .purple) {
+                    BarButton(title: groupTitle, compactTitle: specShortTitle(view.config.groups ?? []), systemImage: "rectangle.3.group", active: !(view.config.groups ?? []).isEmpty, tint: .purple) {
                         SortEditor(document: document, tableID: view.tableID, specs: view.config.groups ?? [], mode: .group) { specs in
                             document.updateViewConfig(view.id, actionName: "Change Grouping") { $0.groups = specs.isEmpty ? nil : specs }
                         }
                     }
                 }
                 if view.type != .chart && view.type != .dashboard {
-                    BarButton(title: sortTitle, systemImage: "arrow.up.arrow.down", active: !(view.config.sorts ?? []).isEmpty, tint: .orange) {
+                    BarButton(title: sortTitle, compactTitle: specShortTitle(view.config.sorts ?? []), systemImage: "arrow.up.arrow.down", active: !(view.config.sorts ?? []).isEmpty, tint: .orange) {
                         SortEditor(document: document, tableID: view.tableID, specs: view.config.sorts ?? [], mode: .sort) { specs in
                             document.updateViewConfig(view.id, actionName: "Change Sort") { $0.sorts = specs.isEmpty ? nil : specs }
                         }
@@ -83,11 +108,12 @@ struct ViewBar: View {
                         }
                         .pickerStyle(.inline)
                     } label: {
-                        Label("Row height", systemImage: "arrow.up.and.down.text.horizontal")
-                            .labelStyle(.iconOnly)
+                        Image(systemName: "arrow.up.and.down.text.horizontal")
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .fixedSize()
+                    .padding(.horizontal, 6)
                     .help("Row height")
                 }
                 ViewTypeSettings(document: document, view: view)
@@ -96,61 +122,67 @@ struct ViewBar: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .alert("Rename View", isPresented: $renaming) {
-            TextField("Name", text: $nameText)
-            Button("Rename") { document.renameView(view.id, to: nameText) }
-            Button("Cancel", role: .cancel) {}
-        }
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(height: Theme.barHeight)
     }
 
     private var hiddenTitle: String {
         let n = view.config.hiddenFieldIDs?.count ?? 0
-        return n == 0 ? "Hide fields" : "\(n) hidden field\(n == 1 ? "" : "s")"
+        return n == 0 ? "Hide fields" : "\(n) hidden"
     }
 
     private var filterTitle: String {
         let n = view.config.filter?.conditionCount ?? 0
-        return n == 0 ? "Filter" : "Filtered by \(n) field\(n == 1 ? "" : "s")"
+        return n == 0 ? "Filter" : "\(n) filter\(n == 1 ? "" : "s")"
     }
 
     private var groupTitle: String {
-        let n = view.config.groups?.count ?? 0
-        return n == 0 ? "Group" : "Grouped by \(n) field\(n == 1 ? "" : "s")"
+        specTitle(view.config.groups ?? [], none: "Group", verb: "Grouped")
     }
 
     private var sortTitle: String {
-        let n = view.config.sorts?.count ?? 0
-        return n == 0 ? "Sort" : "Sorted by \(n) field\(n == 1 ? "" : "s")"
+        specTitle(view.config.sorts ?? [], none: "Sort", verb: "Sorted")
+    }
+
+    /// "Priority" or "3 fields", for a compact bar.
+    private func specShortTitle(_ specs: [SortSpec]) -> String? {
+        guard let first = specs.first else { return nil }
+        if specs.count == 1, let name = document.field(first.fieldID)?.name {
+            return name.count > 14 ? String(name.prefix(13)) + "…" : name
+        }
+        return "\(specs.count) fields"
+    }
+
+    /// "Sort", "Sorted by Priority" or "Sorted by 3 fields".
+    private func specTitle(_ specs: [SortSpec], none: String, verb: String) -> String {
+        guard let first = specs.first else { return none }
+        if specs.count == 1, let name = document.field(first.fieldID)?.name {
+            return "\(verb) by \(name.count > 18 ? String(name.prefix(17)) + "…" : name)"
+        }
+        return "\(verb) by \(specs.count) fields"
     }
 }
 
 /// A toolbar-strip button that opens a popover and tints itself when its setting is active.
 struct BarButton<Content: View>: View {
     let title: String
+    /// A shorter title for when the bar is short of room (an active setting keeps a label).
+    var compactTitle: String? = nil
     let systemImage: String
     var active = false
     var tint: Color = .gray
     @ViewBuilder var content: () -> Content
     @State private var presented = false
+    @Environment(\.compactViewBar) private var compact
 
     var body: some View {
         Button {
             presented.toggle()
         } label: {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(active ? tint.opacity(0.16) : Color.clear))
-                .contentShape(Rectangle())
+            PillLabel(title: compact ? (active ? compactTitle ?? title : nil) : title, systemImage: systemImage, active: active || presented)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(active ? tint : .primary)
+        .help(title)
         .popover(isPresented: $presented, arrowEdge: .bottom) {
             content()
         }
@@ -412,12 +444,13 @@ private struct ColorRuleRow: View {
 struct ViewTypeSettings: View {
     let document: BaseDocument
     let view: ViewModel
+    @Environment(\.compactViewBar) private var compact
 
     var body: some View {
         let fields = document.fields(in: view.tableID)
         switch view.type {
         case .kanban:
-            fieldMenu("Stacked by", icon: "rectangle.split.3x1", current: view.config.stackFieldID, options: fields.filter { $0.type == .singleSelect }) { id in
+            fieldMenu("Stack", icon: "rectangle.split.3x1", current: view.config.stackFieldID, options: fields.filter { $0.type == .singleSelect }) { id in
                 document.updateViewConfig(view.id, actionName: "Change Stack Field") { $0.stackFieldID = id }
             }
             fieldMenu("Cover", icon: "photo", current: view.config.coverFieldID, options: fields.filter { $0.type == .attachment }, allowNone: true) { id in
@@ -426,11 +459,12 @@ struct ViewTypeSettings: View {
             Toggle(isOn: Binding(get: { view.config.hideEmptyStacks ?? false }, set: { hide in
                 document.updateViewConfig(view.id, actionName: hide ? "Hide Empty Stacks" : "Show Empty Stacks") { $0.hideEmptyStacks = hide ? true : nil }
             })) {
-                Text("Hide empty stacks").font(.system(size: 12))
+                Text("Hide empty").font(.system(size: 12))
             }
             .toggleStyle(.checkbox)
             .fixedSize()
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
+            .help("Hide stacks with no records")
         case .list:
             fieldMenu("Nest by", icon: "list.bullet.indent", current: view.config.listChildLinkFieldID, options: fields.filter { $0.type == .link }, allowNone: true, newSelfLink: fields.contains { $0.name.lowercased() == "subtasks" } ? nil : "Subtasks") { id in
                 document.updateViewConfig(view.id, actionName: "Change Nesting") { $0.listChildLinkFieldID = id }
@@ -455,15 +489,32 @@ struct ViewTypeSettings: View {
                     document.updateViewConfig(view.id, actionName: "Change Dependencies") { $0.dependencyFieldID = id }
                 }
             }
-            Picker("", selection: Binding(get: { view.config.timelineScale ?? .month }, set: { s in
+            let scale = Binding(get: { view.config.timelineScale ?? .month }, set: { s in
                 document.updateViewConfig(view.id, actionName: "Change Scale") { $0.timelineScale = s }
-            })) {
-                ForEach(TimelineScale.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            })
+            if compact {
+                Menu {
+                    Picker("Scale", selection: scale) {
+                        ForEach(TimelineScale.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label(scale.wrappedValue.displayName, systemImage: "calendar")
+                        .font(.system(size: 12))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .help("Scale")
+            } else {
+                Picker("", selection: scale) {
+                    ForEach(TimelineScale.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 250)
+                .controlSize(.small)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 250)
-            .controlSize(.small)
         default:
             EmptyView()
         }
@@ -493,11 +544,25 @@ struct ViewTypeSettings: View {
                 }
             }
         } label: {
-            Label("\(title): \(document.field(current)?.name ?? "None")", systemImage: icon)
+            // macOS draws menu labels as one image and one string.
+            Label(compact ? (document.field(current)?.name ?? "None") : "\(title): \(document.field(current)?.name ?? "None")", systemImage: icon)
                 .font(.system(size: 12))
         }
+        .help(title)
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 6)
+    }
+}
+
+private struct CompactViewBarKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set when the view bar is short of room: inactive settings show only their icon.
+    var compactViewBar: Bool {
+        get { self[CompactViewBarKey.self] }
+        set { self[CompactViewBarKey.self] = newValue }
     }
 }

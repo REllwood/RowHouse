@@ -349,8 +349,8 @@ final class GroupHeaderView: NSView {
             chevron.draw(in: NSRect(x: indent, y: bounds.midY - 6, width: 10, height: 12), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
         var x = indent + 20
-        let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor]
-        let label = NSAttributedString(string: fieldName.uppercased(), attributes: small)
+        let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor]
+        let label = NSAttributedString(string: fieldName, attributes: small)
         label.draw(at: NSPoint(x: x, y: bounds.midY - 13))
         let titleAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.labelColor]
         if case .choice(let c) = fieldValue {

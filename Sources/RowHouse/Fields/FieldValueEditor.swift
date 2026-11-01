@@ -254,6 +254,7 @@ struct SelectEditor: View {
     let style: EditorStyle
     var initialText: String?
     @State private var search = ""
+    @State private var showingOptions = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -263,7 +264,39 @@ struct SelectEditor: View {
         let choices = field?.choices ?? []
         let filtered = choices.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
         VStack(alignment: .leading, spacing: 8) {
-            if !selectedIDs.isEmpty {
+            if style == .detail && !multi, let id = selectedIDs.first, let current = choices.first(where: { $0.id == id }) {
+                // One chip that opens the option picker, instead of a chip, a clear button and a menu.
+                Button {
+                    showingOptions = true
+                } label: {
+                    HStack(spacing: 5) {
+                        ChoiceChip(name: current.name, color: current.color)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Change \(field?.name ?? "the option")")
+                .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SelectEditor(document: document, fieldID: fieldID, value: Binding(get: { value }, set: { new in
+                            value = new
+                            showingOptions = false
+                        }), style: .popover)
+                        Divider()
+                        Button("Clear", role: .destructive) {
+                            value = .null
+                            showingOptions = false
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.callout)
+                    }
+                    .padding(12)
+                    .frame(width: 260)
+                }
+            } else if !selectedIDs.isEmpty {
                 FlowLayout(spacing: 4) {
                     ForEach(selectedIDs, id: \.self) { id in
                         if let c = choices.first(where: { $0.id == id }) {
@@ -318,11 +351,6 @@ struct SelectEditor: View {
                     }
                 }
                 .frame(maxHeight: style == .popover ? 260 : 180)
-            } else {
-                Menu("Change") {
-                    ForEach(choices) { c in Button(c.name) { toggle(c.id, multi: false) } }
-                }
-                .fixedSize()
             }
         }
         .onAppear {
@@ -378,30 +406,39 @@ struct DateValueEditor: View {
 
     var body: some View {
         let date = value.stringValue.flatMap { DateCoding.decode($0) }
-        VStack(alignment: .leading, spacing: 8) {
-            if style == .popover {
+        if style == .popover {
+            VStack(alignment: .leading, spacing: 8) {
                 DatePicker("", selection: binding(date), displayedComponents: field.includesTime ? [.date, .hourAndMinute] : [.date])
                     .datePickerStyle(.graphical)
                     .labelsHidden()
-            } else {
-                HStack {
-                    if date != nil {
-                        DatePicker("", selection: binding(date), displayedComponents: field.includesTime ? [.date, .hourAndMinute] : [.date])
-                            .datePickerStyle(.field)
-                            .labelsHidden()
-                    } else {
-                        Button("Add date") { value = .string(DateCoding.encode(Date(), includeTime: field.includesTime)) }
-                    }
-                }
+                quickButtons(date)
             }
-            HStack {
-                Button("Today") { value = .string(DateCoding.encode(Date(), includeTime: field.includesTime)) }
+        } else {
+            // The date and its shortcuts on one line.
+            HStack(spacing: 8) {
                 if date != nil {
-                    Button("Clear") { value = .null }
+                    DatePicker("", selection: binding(date), displayedComponents: field.includesTime ? [.date, .hourAndMinute] : [.date])
+                        .datePickerStyle(.field)
+                        .labelsHidden()
+                        .fixedSize()
+                } else {
+                    Button("Add date") { value = .string(DateCoding.encode(Date(), includeTime: field.includesTime)) }
                 }
+                quickButtons(date)
             }
-            .controlSize(.small)
         }
+    }
+
+    private func quickButtons(_ date: Date?) -> some View {
+        HStack(spacing: 6) {
+            if date != nil {
+                Button("Today") { value = .string(DateCoding.encode(Date(), includeTime: field.includesTime)) }
+                Button("Clear") { value = .null }
+            }
+        }
+        .controlSize(.small)
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
     }
 
     private func binding(_ date: Date?) -> Binding<Date> {

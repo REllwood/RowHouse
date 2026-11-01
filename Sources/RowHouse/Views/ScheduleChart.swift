@@ -303,8 +303,8 @@ struct ScheduleChart: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Spacer(minLength: 0)
-            Text(field?.name.uppercased() ?? "")
-                .font(.system(size: 9, weight: .semibold))
+            Text(field?.name ?? "")
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
         }

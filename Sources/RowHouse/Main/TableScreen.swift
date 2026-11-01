@@ -17,7 +17,7 @@ struct TableScreen: View {
         HStack(spacing: 0) {
             if state.showViewsList {
                 ViewsListPanel(document: document, tableID: tableID, state: state)
-                    .frame(width: 230)
+                    .frame(width: Theme.panelWidth)
                 Divider()
             }
             VStack(spacing: 0) {
@@ -33,7 +33,7 @@ struct TableScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(document.table(tableID)?.name ?? "")
-        .navigationSubtitle(document.info.name)
+        .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -43,10 +43,10 @@ struct TableScreen: View {
                 }
                 .help("Show or hide the views list")
             }
-            ToolbarItem(placement: .navigation) {
-                TableTitle(document: document, tableID: tableID)
+            ToolbarItem(placement: .automatic) {
+                TableDetailsButton(document: document, tableID: tableID)
             }
-            ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .automatic) {
                 if let type = view?.type, type != .form && type != .chart && type != .dashboard {
                     let templates = document.table(tableID)?.recordTemplates ?? []
                     if templates.isEmpty || view?.type != .grid {
@@ -95,6 +95,11 @@ struct TableScreen: View {
         }
     }
 
+    private var subtitle: String {
+        let count = document.recordCount(in: tableID)
+        return "\(document.info.name) · \(count) record\(count == 1 ? "" : "s")"
+    }
+
     private func printView(_ view: ViewModel) {
         let current = document.view(view.id) ?? view
         Printing.print(html: document.exportHTML(view: current, collapsed: state.collapsedGroups[view.id] ?? []),
@@ -114,26 +119,21 @@ struct TableScreen: View {
     }
 }
 
-private struct TableTitle: View {
+/// Opens the table's name and description editor.
+private struct TableDetailsButton: View {
     let document: BaseDocument
     let tableID: String
-    @State private var editingDescription = false
+    @State private var editing = false
 
     var body: some View {
-        let table = document.table(tableID)
+        let description = document.table(tableID)?.description ?? ""
         Button {
-            editingDescription = true
+            editing = true
         } label: {
-            HStack(spacing: 6) {
-                Text(table?.name ?? "").font(.headline)
-                Text("\(document.recordCount(in: tableID)) records")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Label("Table Details", systemImage: "info.circle")
         }
-        .buttonStyle(.plain)
-        .help(table?.description.isEmpty == false ? table!.description : "Add a table description")
-        .popover(isPresented: $editingDescription) {
+        .help(description.isEmpty ? "Rename the table or add a description" : description)
+        .popover(isPresented: $editing, arrowEdge: .bottom) {
             TableDescriptionEditor(document: document, tableID: tableID)
         }
     }
@@ -146,20 +146,26 @@ private struct TableDescriptionEditor: View {
     @State private var text = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            PanelHeading(title: "Name")
             TextField("Table name", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .font(.headline)
                 .onSubmit { if name != document.table(tableID)?.name { document.renameTable(tableID, to: name) } }
-            Text("Description").font(.caption).foregroundStyle(.secondary)
+            PanelHeading(title: "Description")
+                .padding(.top, 4)
             TextEditor(text: $text)
                 .font(.body)
-                .frame(width: 320, height: 90)
+                .frame(width: 320, height: 96)
                 .scrollContentBackground(.hidden)
-                .padding(4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.hairline))
+            Text("\(document.recordCount(in: tableID)) records · \(document.fields(in: tableID).count) fields · \(document.views(in: tableID).count) views")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
         }
-        .padding(14)
+        .padding(16)
         .onAppear {
             name = document.table(tableID)?.name ?? ""
             text = document.table(tableID)?.description ?? ""

@@ -102,9 +102,10 @@ struct ListView: View {
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
+        .lineLimit(1)
         .padding(.horizontal, 16)
         .frame(height: 32)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: Theme.gridBackground))
     }
 
     private func columnHeader(_ columns: [FieldModel]) -> some View {
@@ -121,10 +122,10 @@ struct ListView: View {
                 .frame(width: Self.columnWidth, alignment: .leading)
             }
         }
-        .font(.system(size: 11, weight: .semibold))
+        .font(.system(size: 12, weight: .medium))
         .foregroundStyle(.secondary)
         .padding(.trailing, 16)
-        .frame(height: 28)
+        .frame(height: 30)
         .background(Color(nsColor: Theme.headerBackground))
         .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: Theme.gridLine)).frame(height: 1) }
     }
@@ -142,8 +143,8 @@ struct ListView: View {
                 .foregroundStyle(.secondary)
                 .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
                 .frame(width: 14)
-            Text(document.field(header.fieldID)?.name.uppercased() ?? "")
-                .font(.system(size: 10, weight: .semibold))
+            Text(document.field(header.fieldID)?.name ?? "")
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             if case .choice(let c) = header.value {
                 ChoiceChip(name: c.name, color: c.color)
@@ -359,8 +360,8 @@ private struct NestedSummary: View {
         HStack(spacing: 12) {
             ForEach(Array(fields)) { field in
                 HStack(spacing: 5) {
-                    Text(field.name.uppercased())
-                        .font(.system(size: 9, weight: .semibold))
+                    Text(field.name)
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
                     CompactValueView(session: session, record: record, field: field)
                         .lineLimit(1)

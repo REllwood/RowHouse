@@ -8,12 +8,11 @@ struct SidebarView: View {
     @State private var renameText = ""
     @State private var confirmDelete: DeleteTarget?
     @State private var collaboratorsBase: String?
-    @State private var collapsed: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "RowHouse.sidebar.collapsed") ?? [])
 
     var body: some View {
         List(selection: Binding(get: { state.destination }, set: { if let v = $0 { state.destination = v } })) {
             ForEach(app.orderedSessions) { session in
-                Section(isExpanded: expandedBinding(session.id)) {
+                Section {
                     BaseSectionRows(session: session, state: state, renaming: $renaming, renameText: $renameText, confirmDelete: $confirmDelete)
                 } header: {
                     BaseHeader(session: session)
@@ -34,6 +33,9 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Bases open after the list first appears, and sections added later start collapsed. Building
+        // the list again when the set of open bases changes keeps every base expanded.
+        .id(app.orderedSessions.map(\.id).joined(separator: ","))
         .safeAreaInset(edge: .bottom) {
             SidebarFooter(state: state)
         }
@@ -52,13 +54,6 @@ struct SidebarView: View {
                 CollaboratorsSheet(document: document)
             }
         }
-    }
-
-    private func expandedBinding(_ id: String) -> Binding<Bool> {
-        Binding(get: { !collapsed.contains(id) }, set: { expanded in
-            if expanded { collapsed.remove(id) } else { collapsed.insert(id) }
-            UserDefaults.standard.set(Array(collapsed), forKey: "RowHouse.sidebar.collapsed")
-        })
     }
 
     @ViewBuilder
@@ -168,18 +163,19 @@ private struct BaseHeader: View {
 
     var body: some View {
         let info = session.document.info
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             Image(systemName: info.icon)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 20, height: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(info.color.swiftUI.gradient))
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(info.color.swiftUI.gradient))
             Text(info.name)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+                .truncationMode(.tail)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
 }
 
@@ -193,11 +189,15 @@ private struct BaseSectionRows: View {
     var body: some View {
         let doc = session.document
         ForEach(doc.tables) { table in
-            HStack {
-                Label(table.name, systemImage: "tablecells")
-                Spacer()
+            HStack(spacing: 6) {
+                Label {
+                    Text(table.name).lineLimit(1).truncationMode(.tail)
+                } icon: {
+                    Image(systemName: "tablecells").foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
                 Text("\(doc.recordCount(in: table.id))")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
@@ -223,13 +223,18 @@ private struct BaseSectionRows: View {
             doc.moveTable(tables[from].id, before: before)
         }
         let enabled = doc.automations.filter(\.enabled).count
-        HStack {
-            Label("Automations", systemImage: "bolt.fill")
-            Spacer()
+        HStack(spacing: 6) {
+            Label {
+                Text("Automations")
+            } icon: {
+                Image(systemName: "bolt").foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
             if enabled > 0 {
                 Text("\(enabled)")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+                    .monospacedDigit()
             }
         }
         .tag(Destination.automations(base: session.id))
@@ -257,14 +262,15 @@ private struct SidebarFooter: View {
                     }
                 } label: {
                     Label("New Base", systemImage: "plus")
+                        .font(.system(size: 12, weight: .medium))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                Spacer()
+                Spacer(minLength: 8)
                 SyncStatus()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .frame(height: Theme.barHeight)
         }
     }
 }
@@ -275,9 +281,10 @@ private struct SyncStatus: View {
     var body: some View {
         let inCloud = app.library.isInICloudDrive
         Label(inCloud ? "iCloud Drive" : "On this Mac", systemImage: inCloud ? "icloud" : "internaldrive")
-            .font(.caption)
+            .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .labelStyle(.titleAndIcon)
+            .lineLimit(1)
             .help(app.library.rootURL.path)
     }
 }

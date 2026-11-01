@@ -13,6 +13,7 @@ struct AutomationsScreen: View {
         HStack(spacing: 0) {
             AutomationList(session: session, engine: engine, selection: $selection)
                 .frame(width: 290)
+                .background(Theme.panelBackground)
             Divider()
             if let id = selection, document.automation(id) != nil {
                 AutomationEditor(session: session, engine: engine, automationID: id)

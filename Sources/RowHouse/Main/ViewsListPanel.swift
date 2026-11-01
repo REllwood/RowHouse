@@ -11,22 +11,39 @@ struct ViewsListPanel: View {
 
     var body: some View {
         let current = state.currentView(for: tableID, in: document)
+        let views = document.views(in: tableID)
         VStack(alignment: .leading, spacing: 0) {
-            if document.views(in: tableID).count > 8 {
-                TextField("Find a view", text: $filter)
-                    .textFieldStyle(.roundedBorder)
-                    .padding(10)
-            } else {
+            HStack(spacing: 6) {
                 Text("Views")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
+                    .font(.system(size: 13, weight: .semibold))
+                Text("\(views.count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                Spacer()
+                newViewMenu(compact: true)
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+            .frame(height: Theme.barHeight)
+            if views.count > 8 {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    TextField("Find a view", text: $filter)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.05)))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
             }
             List {
-                ForEach(document.views(in: tableID).filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }) { view in
-                    ViewRowItem(view: view, selected: view.id == current?.id, renaming: renamingID == view.id, renameText: $renameText) {
+                ForEach(views.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }) { view in
+                    ViewRowItem(view: view, tint: color(for: view.type), selected: view.id == current?.id, renaming: renamingID == view.id, renameText: $renameText) {
                         document.renameView(view.id, to: renameText)
                         renamingID = nil
                     }
@@ -44,13 +61,13 @@ struct ViewsListPanel: View {
                         Button("Delete View", role: .destructive) {
                             document.deleteView(view.id)
                         }
-                        .disabled(document.views(in: tableID).count <= 1)
+                        .disabled(views.count <= 1)
                     }
-                    .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                    .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                     .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
                 .onMove(perform: filter.isEmpty ? { indices, destination in
-                    let views = document.views(in: tableID)
                     guard let from = indices.first else { return }
                     document.moveView(views[from].id, before: destination < views.count ? views[destination].id : nil)
                 } : nil)
@@ -58,36 +75,38 @@ struct ViewsListPanel: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             Divider()
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Create a view")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
+            newViewMenu(compact: false)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+        }
+        .background(Theme.panelBackground)
+    }
+
+    /// Menu of view types, shown as a "+" in the header or as a full-width row at the bottom of the panel.
+    private func newViewMenu(compact: Bool) -> some View {
+        Menu {
+            Section("New view") {
                 ForEach(ViewType.allCases) { type in
                     Button {
                         let id = document.createView(in: tableID, name: "\(type.displayName) view", type: type)
                         state.viewForTable[tableID] = id
                     } label: {
-                        HStack {
-                            Image(systemName: type.symbolName)
-                                .frame(width: 18)
-                                .foregroundStyle(color(for: type))
-                            Text(type.displayName)
-                            Spacer()
-                            Image(systemName: "plus").foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
+                        Label(type.displayName, systemImage: type.symbolName)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, 8)
-            .padding(.horizontal, 4)
+        } label: {
+            if compact {
+                Image(systemName: "plus")
+            } else {
+                Label("New view", systemImage: "plus")
+                    .font(.system(size: 12))
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Add a view")
     }
 
     private func color(for type: ViewType) -> Color {
@@ -108,29 +127,39 @@ struct ViewsListPanel: View {
 
 private struct ViewRowItem: View {
     let view: ViewModel
+    let tint: Color
     let selected: Bool
     let renaming: Bool
     @Binding var renameText: String
     let commit: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: view.type.symbolName)
+            Image(systemName: view.config.isLocked ? "lock.fill" : view.type.symbolName)
+                .font(.system(size: 12))
                 .frame(width: 18)
-                .foregroundStyle(selected ? Color.accentColor : .secondary)
+                .foregroundStyle(tint)
             if renaming {
                 TextField("View name", text: $renameText)
                     .textFieldStyle(.plain)
                     .onSubmit(commit)
             } else {
                 Text(view.name)
+                    .font(.system(size: 13, weight: selected ? .medium : .regular))
                     .lineLimit(1)
-                    .fontWeight(selected ? .semibold : .regular)
+                    .truncationMode(.tail)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.14) : .clear))
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(background))
+        .onHover { hovering = $0 }
+    }
+
+    private var background: Color {
+        if selected { return Color.accentColor.opacity(0.14) }
+        return hovering ? Color.primary.opacity(0.05) : .clear
     }
 }

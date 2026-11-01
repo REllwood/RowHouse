@@ -41,7 +41,7 @@ struct GalleryView: View {
             }
             .padding(20)
         }
-        .background(Color.primary.opacity(0.025))
+        .background(Theme.canvasBackground)
         .onAppear {
             commandTarget.addRecord = addRecord
             commandTarget.expandSelection = {}

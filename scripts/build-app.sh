@@ -5,6 +5,8 @@
 #   scripts/build-app.sh                 # universal release build, ad-hoc signed
 #   CONFIG=debug scripts/build-app.sh    # fast single-arch debug build
 #   SIGN_IDENTITY="Developer ID Application: …" scripts/build-app.sh   # hardened runtime + timestamp
+#   FLAVOR=dev CONFIG=debug scripts/build-app.sh   # "RowHouse Dev": its own bundle id, settings and
+#                                                  # rowhouse-dev:// links, so it runs beside the real app
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -34,6 +36,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/RowHouse" "$APP/Contents/MacOS/RowHouse"
 cp "$BIN_DIR/rowhouse-mcp" "$HELPER"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD_NUMBER/" Packaging/Info.plist > "$APP/Contents/Info.plist"
+if [[ "${FLAVOR:-}" == "dev" ]]; then
+  PLIST="$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.rellwood.RowHouse.dev" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName RowHouse Dev" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLName com.rellwood.RowHouse.dev" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 rowhouse-dev" "$PLIST"
+fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 if [[ -f Packaging/AppIcon.icns ]]; then
   cp Packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

@@ -27,6 +27,7 @@ struct RecordDetailSheet: View {
                     Divider()
                     RecordSidePanel(session: session, record: record)
                         .frame(width: 300)
+                        .background(Theme.panelBackground)
                 }
             } else {
                 ContentUnavailableView("Record deleted", systemImage: "trash", description: Text("This record no longer exists."))
@@ -115,20 +116,24 @@ struct RecordFieldsForm: View {
         let document = session.document
         let view = state.currentView(for: record.tableID, in: document)
         let fields = view.map { document.orderedFields(for: $0) } ?? document.fields(in: record.tableID)
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(fields) { field in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Image(systemName: field.type.symbolName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 14)
                         Text(field.name)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                         if field.type.isComputed {
-                            Text(field.type.displayName.uppercased())
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.tertiary)
+                            Text(field.type.displayName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.primary.opacity(0.06)))
                         }
                         if !field.description.isEmpty {
                             Image(systemName: "info.circle")
@@ -166,7 +171,8 @@ private struct RecordSidePanel: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(12)
+            .padding(.horizontal, 12)
+            .frame(height: Theme.barHeight + 8)
             Divider()
             if tab == 0 {
                 CommentsPanel(document: session.document, record: record)

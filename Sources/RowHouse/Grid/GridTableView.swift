@@ -153,8 +153,8 @@ final class FieldHeaderCell: NSTableHeaderCell {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingTail
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-            .foregroundColor: NSColor.labelColor,
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.labelColor.withAlphaComponent(0.88),
             .paragraphStyle: style,
         ]
         let right = cellFrame.maxX - 22

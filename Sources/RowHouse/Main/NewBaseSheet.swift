@@ -3,9 +3,10 @@ import SwiftUI
 
 struct TemplateGrid: View {
     @Binding var selection: BaseTemplate
+    var minimumCardWidth: CGFloat = 170
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: 12)], spacing: 12) {
             ForEach(BaseTemplate.allCases) { template in
                 Button {
                     selection = template
@@ -93,7 +94,7 @@ struct WelcomeView: View {
     private var storageMessage: String {
         if app.library.isInICloudDrive { return "Your bases are saved in iCloud Drive › RowHouse and sync to your other Macs." }
         if !Library.isICloudDriveAvailable { return "iCloud Drive is off, so bases are saved on this Mac. Turn it on to sync, then choose iCloud Drive in Settings." }
-        return "Bases are saved in \(app.library.rootURL.path). You can change this in Settings."
+        return "Bases are saved in \((app.library.rootURL.path as NSString).abbreviatingWithTildeInPath). You can change this in Settings."
     }
 
     var body: some View {
@@ -109,7 +110,8 @@ struct WelcomeView: View {
                         .frame(maxWidth: 560)
                 }
                 .padding(.top, 40)
-                TemplateGrid(selection: $template)
+                // Narrow cards so all five templates sit on one row in a normal window.
+                TemplateGrid(selection: $template, minimumCardWidth: 148)
                     .frame(maxWidth: 820)
                 HStack(spacing: 12) {
                     Button {
@@ -136,11 +138,16 @@ struct WelcomeView: View {
                 Label(storageMessage, systemImage: app.library.isInICloudDrive ? "icloud" : "internaldrive")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 560)
                     .padding(.bottom, 40)
             }
             .padding(.horizontal, 40)
             .frame(maxWidth: .infinity)
         }
+        .background(Theme.canvasBackground)
     }
 }
 
