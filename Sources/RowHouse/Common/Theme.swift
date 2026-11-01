@@ -65,13 +65,93 @@ enum Theme {
     static let linkChipBackground = dynamic(light: hex(0xE1ECFF), dark: hex(0x2D7FF9, alpha: 0.30))
     static let linkChipText = dynamic(light: hex(0x0F3D8C), dark: hex(0xDCE8FF))
     static let lookupChipBackground = dynamic(light: hex(0xEEF0F3), dark: hex(0xFFFFFF, alpha: 0.10))
-    static let gridBackground = NSColor.controlBackgroundColor
-    static let gridLine = dynamic(light: hex(0xE3E5E8), dark: hex(0xFFFFFF, alpha: 0.09))
-    static let headerBackground = dynamic(light: hex(0xF5F6F8), dark: hex(0x2A2A2D))
-    static let rowHover = dynamic(light: hex(0xF7F8FA), dark: hex(0xFFFFFF, alpha: 0.04))
-    static let groupBackground = dynamic(light: hex(0xF1F3F6), dark: hex(0x323236))
-    static let selectionFill = dynamic(light: hex(0x2D7FF9, alpha: 0.10), dark: hex(0x2D7FF9, alpha: 0.22))
+    static let gridBackground = dynamic(light: .white, dark: hex(0x1C1C1E))
+    static let gridLine = dynamic(light: hex(0xECEDF0), dark: hex(0xFFFFFF, alpha: 0.07))
+    static let headerBackground = dynamic(light: hex(0xF9F9FA), dark: hex(0x232325))
+    static let rowHover = dynamic(light: hex(0xF6F7F9), dark: hex(0xFFFFFF, alpha: 0.035))
+    static let groupBackground = dynamic(light: hex(0xF3F4F6), dark: hex(0x2A2A2D))
+    /// Selected rows and ranges follow the system accent colour.
+    static var selectionFill: NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .vibrantDark, .accessibilityHighContrastDarkAqua]) != nil
+            return NSColor.controlAccentColor.withAlphaComponent(dark ? 0.24 : 0.11)
+        }
+    }
     static let star = hex(0xFCB400)
+
+    // MARK: Layout
+
+    /// Height of the bar under the toolbar and of panel headers.
+    static let barHeight: CGFloat = 40
+    static let panelWidth: CGFloat = 224
+    static let cornerRadius: CGFloat = 8
+    static let cardRadius: CGFloat = 12
+
+    // MARK: Surfaces
+
+    /// Background of side panels (views list, automation list, form settings).
+    static let panelBackground = Color(nsColor: dynamic(light: hex(0xF7F7F8), dark: hex(0x232325)))
+    /// Background of the main content area behind cards, boards and dashboards.
+    static let canvasBackground = Color(nsColor: dynamic(light: hex(0xF4F5F7), dark: hex(0x161618)))
+    /// Card and tile surfaces.
+    static let cardBackground = Color(nsColor: dynamic(light: .white, dark: hex(0x26262A)))
+    /// Thin separators and card borders.
+    static let hairline = Color(nsColor: dynamic(light: NSColor.black.withAlphaComponent(0.08), dark: NSColor.white.withAlphaComponent(0.08)))
+}
+
+/// The label of a compact bar or panel button: icon and title in a rounded pill that fills on hover
+/// and takes the accent colour when the setting it controls is active.
+struct PillLabel: View {
+    var title: String?
+    var systemImage: String?
+    var active = false
+    var showsChevron = false
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .regular))
+                    .frame(minWidth: 14)
+            }
+            if let title {
+                Text(title)
+                    .font(.system(size: 12, weight: active ? .medium : .regular))
+            }
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, title == nil ? 6 : 9)
+        .frame(height: 26)
+        .foregroundStyle(active ? Color.accentColor : Color.primary.opacity(isEnabled ? 0.82 : 0.35))
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(fill))
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+
+    private var fill: Color {
+        if active { return Color.accentColor.opacity(hovering ? 0.18 : 0.13) }
+        return hovering && isEnabled ? Color.primary.opacity(0.06) : .clear
+    }
+}
+
+/// Small section heading used in panels and inspectors.
+struct PanelHeading: View {
+    var title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+    }
 }
 
 extension ChoiceColor {
@@ -131,8 +211,9 @@ extension View {
     /// Card chrome shared by kanban, gallery and calendar items.
     func cardStyle(selected: Bool = false) -> some View {
         self
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 2 : 1))
-            .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+            .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.cardBackground))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).strokeBorder(selected ? Color.accentColor : Theme.hairline, lineWidth: selected ? 2 : 1))
+            .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
     }
 }

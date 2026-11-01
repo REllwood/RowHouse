@@ -75,22 +75,24 @@ struct RecordCard: View {
             if let coverFieldID, let coverField = document.field(coverFieldID) {
                 cover(document.value(record, coverField))
             }
-            VStack(alignment: .leading, spacing: 7) {
-                Text(document.primaryTitle(record))
+            VStack(alignment: .leading, spacing: 9) {
+                Text(document.primaryTitle(record).isEmpty ? "Unnamed record" : document.primaryTitle(record))
                     .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(document.primaryTitle(record).isEmpty ? .secondary : .primary)
                     .lineLimit(2)
                 ForEach(fields) { field in
                     if !document.value(record, field).isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(field.name.uppercased())
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.tertiary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(field.name)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                             CompactValueView(session: session, record: record, field: field)
                         }
                     }
                 }
             }
-            .padding(10)
+            .padding(12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .leading) {
@@ -98,7 +100,6 @@ struct RecordCard: View {
                 Rectangle().fill(accent.swiftUI).frame(width: 3)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10))
         .cardStyle()
     }
 

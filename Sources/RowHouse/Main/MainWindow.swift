@@ -6,6 +6,7 @@ struct MainWindow: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
     @Environment(\.controlActiveState) private var activeState
+    @Environment(\.openSettings) private var openSettings
     @State private var state = WindowState()
     @State private var pendingLink: URL?
 
@@ -105,8 +106,12 @@ struct MainWindow: View {
     /// rowhouse://record?base=…&table=…&record=…, rowhouse://open?base=…&table=…&view=…,
     /// rowhouse://automations?base=… and rowhouse://form?base=…&view=…&prefill_<Field>=…
     private func handleDeepLink(_ url: URL) {
-        guard url.scheme == "rowhouse", let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        guard url.scheme == "rowhouse" || url.scheme == AppInfo.urlScheme, let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let q = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        if url.host == "dev", AppInfo.isDevelopmentBuild {
+            showForDevelopment(q)
+            return
+        }
         guard let base = q["base"] else { return }
         guard let session = app.session(base) else {
             // The link may have launched the app; replay it once the bases have opened.
@@ -132,6 +137,42 @@ struct MainWindow: View {
         if let table, let view = q["view"], session.document.view(view) != nil { state.viewForTable[table] = view }
         if let record = q["record"], session.document.record(record) != nil {
             state.expandedRecord = ExpandedRecord(baseID: base, recordID: record)
+        }
+    }
+}
+
+extension MainWindow {
+    /// rowhouse-dev://dev?show=… opens a sheet or window without clicking, so development builds can be
+    /// checked and screenshotted. Only development builds ("RowHouse Dev") respond.
+    func showForDevelopment(_ q: [String: String]) {
+        let base = q["base"] ?? state.destination?.baseID
+        let table: String? = q["table"] ?? {
+            if case .table(_, let t)? = state.destination { return t }
+            return nil
+        }()
+        switch q["show"] ?? "" {
+        case "newBase": state.newBaseSheet = true
+        case "csvImport": state.csvImportSheet = true
+        case "airtableImport": state.airtableImportSheet = true
+        case "shortcuts": state.showShortcuts = true
+        case "trash": if let base { state.trashBase = BaseSheetTarget(baseID: base) }
+        case "script": if let base { state.scriptBase = BaseSheetTarget(baseID: base) }
+        case "search": if let base { state.searchBase = BaseSheetTarget(baseID: base) }
+        case "findReplace": if let base { state.findReplaceTable = BaseSheetTarget(baseID: base, tableID: table) }
+        case "duplicates": if let base { state.duplicatesTable = BaseSheetTarget(baseID: base, tableID: table) }
+        case "settings": openSettings()
+        case "close":
+            state.newBaseSheet = false
+            state.csvImportSheet = false
+            state.airtableImportSheet = false
+            state.showShortcuts = false
+            state.trashBase = nil
+            state.scriptBase = nil
+            state.searchBase = nil
+            state.findReplaceTable = nil
+            state.duplicatesTable = nil
+            state.expandedRecord = nil
+        default: break
         }
     }
 }

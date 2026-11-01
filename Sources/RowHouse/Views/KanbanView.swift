@@ -88,7 +88,7 @@ struct KanbanView: View {
             .padding(16)
             .animation(.snappy(duration: 0.2), value: collapsed)
         }
-        .background(Color.primary.opacity(0.025))
+        .background(Theme.canvasBackground)
     }
 
     private func setCollapsed(_ key: String, _ collapse: Bool) {
@@ -180,13 +180,17 @@ private struct KanbanColumn: View {
                 } else {
                     Text("Uncategorized").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                 }
-                Text("\(records.count)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                Spacer()
+                Text("\(records.count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Spacer(minLength: 4)
                 Button(action: collapse) {
                     Image(systemName: "arrow.right.and.line.vertical.and.arrow.left")
+                        .font(.system(size: 11))
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
                 .help("Collapse this stack")
                 Button {
                     let values: [String: JSONValue] = choice.map { [stackField.id: .string($0.id)] } ?? [:]
@@ -194,11 +198,14 @@ private struct KanbanColumn: View {
                     state.expandedRecord = ExpandedRecord(baseID: session.id, recordID: id, siblings: siblings)
                 } label: {
                     Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
                 .help("Add a record to this stack")
             }
             .padding(.horizontal, 4)
+            .frame(height: 24)
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(records) { record in
@@ -224,7 +231,7 @@ private struct KanbanColumn: View {
         }
         .padding(10)
         .frame(width: 280)
-        .background(RoundedRectangle(cornerRadius: 12).fill(targeted ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.035)))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(targeted ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.04)))
         .dropDestination(for: String.self) { ids, _ in
             moveCards(ids, to: choice, stackField: stackField, document: document)
         } isTargeted: { targeted = $0 }

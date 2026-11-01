@@ -267,7 +267,7 @@ private struct DayCell: View {
         }
         .padding(4)
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
-        .background(targeted ? Color.accentColor.opacity(0.12) : (inMonth ? Color.clear : Color.primary.opacity(0.025)))
+        .background(targeted ? Color.accentColor.opacity(0.12) : (inMonth ? Color(nsColor: Theme.gridBackground) : Color.primary.opacity(0.03)))
         .overlay(Rectangle().stroke(Color(nsColor: Theme.gridLine), lineWidth: 0.5))
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: addRecord)
@@ -356,7 +356,7 @@ private struct WeekDayColumn: View {
             .frame(maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(targeted ? Color.accentColor.opacity(0.12) : (weekend ? Color.primary.opacity(0.025) : Color.clear))
+        .background(targeted ? Color.accentColor.opacity(0.12) : (weekend ? Color.primary.opacity(0.03) : Color(nsColor: Theme.gridBackground)))
         .overlay(alignment: .trailing) { Rectangle().fill(Color(nsColor: Theme.gridLine)).frame(width: 1) }
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: addRecord)

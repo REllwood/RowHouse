@@ -64,7 +64,7 @@ struct DashboardView: View {
                 }
             }
         }
-        .background(Color.primary.opacity(0.025))
+        .background(Theme.canvasBackground)
     }
 
     private func header(recordCount: Int) -> some View {
@@ -242,10 +242,10 @@ private struct DashboardTile: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.cardBackground))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(editing ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08), style: StrokeStyle(lineWidth: 1, dash: editing ? [5, 3] : []))
+            RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                .strokeBorder(editing ? Color.accentColor.opacity(0.45) : Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: editing ? [5, 3] : []))
         )
         .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
         .contextMenu {

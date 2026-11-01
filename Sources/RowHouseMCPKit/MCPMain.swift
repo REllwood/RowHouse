@@ -52,9 +52,15 @@ public enum MCPMain {
             signalSources.append(source)
         }
 
+        // Keep the main thread servicing the main queue. dispatchMain() would exit the main thread and
+        // let pool threads drain the main queue, which breaks main-actor code such as the library's
+        // folder watcher.
+        // A port keeps the run loop waiting for work instead of returning when it has no other source.
+        RunLoop.main.add(Port(), forMode: .default)
         withExtendedLifetime(signalSources) {
-            dispatchMain()
+            while true { _ = RunLoop.main.run(mode: .default, before: .distantFuture) }
         }
+        fatalError("The main run loop stopped")
     }
 
     @MainActor

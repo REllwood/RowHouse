@@ -132,6 +132,17 @@ enum AppInfo {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
     }
 
+    /// The URL scheme this copy of the app registers ("rowhouse", or "rowhouse-dev" for a development build).
+    static var urlScheme: String {
+        let types = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]]
+        return (types?.first?["CFBundleURLSchemes"] as? [String])?.first ?? "rowhouse"
+    }
+
+    /// A build made with `FLAVOR=dev`, which has its own bundle id and settings.
+    static var isDevelopmentBuild: Bool {
+        Bundle.main.bundleIdentifier == "com.rellwood.RowHouse.dev"
+    }
+
     static let repository = URL(string: "https://github.com/REllwood/RowHouse")!
     static let releasesAPI = URL(string: "https://api.github.com/repos/REllwood/RowHouse/releases/latest")!
     static let releasesPage = URL(string: "https://github.com/REllwood/RowHouse/releases/latest")!

@@ -23,24 +23,34 @@ struct FormView: View {
                     .frame(width: 300)
                 Divider()
             }
-            ScrollView {
-                VStack(spacing: 0) {
-                    if submitted {
-                        successCard
-                    } else {
-                        formCard
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { showBuilder.toggle() }
+                    } label: {
+                        PillLabel(title: showBuilder ? "Hide settings" : "Edit form", systemImage: "slider.horizontal.3", active: showBuilder)
                     }
+                    .buttonStyle(.plain)
                 }
-                .frame(maxWidth: 640)
-                .padding(32)
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if submitted {
+                            successCard
+                        } else {
+                            formCard
+                        }
+                    }
+                    .frame(maxWidth: 640)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 8)
+                    .padding(.bottom, 32)
+                    .frame(maxWidth: .infinity)
+                }
             }
-            .background(Color.primary.opacity(0.03))
-            .overlay(alignment: .topTrailing) {
-                Toggle(isOn: $showBuilder) { Label("Edit form", systemImage: "slider.horizontal.3") }
-                    .toggleStyle(.button)
-                    .padding(12)
-            }
+            .background(Theme.canvasBackground)
         }
         .onAppear(perform: applyPrefill)
         .onChange(of: state.formPrefill[view.id]) { _, _ in applyPrefill() }
@@ -109,8 +119,9 @@ struct FormView: View {
             .buttonStyle(.borderedProminent)
         }
         .padding(32)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor)))
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
+        .shadow(color: .black.opacity(0.06), radius: 10, y: 3)
     }
 
     private var successCard: some View {
@@ -127,7 +138,8 @@ struct FormView: View {
         }
         .padding(48)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.hairline))
     }
 
     private func submit() {
@@ -224,7 +236,7 @@ private struct FormBuilder: View {
             }
             .padding(16)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.panelBackground)
     }
 
     private func labeled<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {

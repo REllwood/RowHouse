@@ -15,7 +15,7 @@ struct RowHouseApp: App {
         }
         .handlesExternalEvents(matching: ["*"])
         .defaultSize(width: 1380, height: 860)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowToolbarStyle(.unified(showsTitle: true))
         .commands { AppCommands() }
 
         Settings {
@@ -33,7 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Two copies of RowHouse on one Mac would share a device id and interleave writes to the same log.
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("RowHouse", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        let lockPath = support.appendingPathComponent("instance.lock").path
+        // A development build ("RowHouse Dev") has its own bundle id and lock, so it can run beside the app.
+        let lockName = AppInfo.isDevelopmentBuild ? "instance-\(Bundle.main.bundleIdentifier ?? "dev").lock" : "instance.lock"
+        let lockPath = support.appendingPathComponent(lockName).path
         instanceLock = open(lockPath, O_CREAT | O_RDWR, 0o644)
         if instanceLock >= 0 && flock(instanceLock, LOCK_EX | LOCK_NB) != 0 {
             let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -83,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// Clicking a mention notification opens the record.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         guard let link = response.notification.request.content.userInfo["link"] as? String,
-              let url = URL(string: link), url.scheme == "rowhouse" else { return }
+              let url = URL(string: link), url.scheme == "rowhouse" || url.scheme == AppInfo.urlScheme else { return }
         await MainActor.run { _ = NSWorkspace.shared.open(url) }
     }
 }
