@@ -247,6 +247,7 @@ private struct SidebarFooter: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            UpdateAvailableButton()
             Divider()
             HStack(spacing: 8) {
                 Menu {
@@ -271,6 +272,44 @@ private struct SidebarFooter: View {
             }
             .padding(.horizontal, 14)
             .frame(height: Theme.barHeight)
+        }
+    }
+}
+
+/// Shown above the sidebar footer once an update check finds a newer version.
+private struct UpdateAvailableButton: View {
+    private let checker = UpdateChecker.shared
+    @State private var hovering = false
+
+    var body: some View {
+        if let version = checker.availableVersion {
+            Button {
+                checker.offerUpdate()
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Update available")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("RowHouse \(version)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous).fill(Color.accentColor.opacity(hovering ? 0.16 : 0.10)))
+                .contentShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("See what is new in RowHouse \(version) and download it")
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
         }
     }
 }

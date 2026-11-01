@@ -110,8 +110,9 @@ struct AppCommands: Commands {
             Divider()
             Button("RowHouse on GitHub") { NSWorkspace.shared.open(AppInfo.repository) }
             Button("Formula Reference") { NSWorkspace.shared.open(URL(string: "https://github.com/REllwood/RowHouse#formulas")!) }
-            Divider()
-            Button("Check for Updates…") { UpdateChecker.shared.check(userInitiated: true) }
+        }
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { UpdateChecker.shared.check(.menu) }
         }
     }
 
