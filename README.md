@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="https://github.com/REllwood/RowHouse/releases/latest"><b>Download for Mac</b></a> ·
-  <a href="https://rellwood.github.io/RowHouse/">Website</a> ·
+  <a href="https://woodenamethyst.com.au/apps/rowhouse">Website</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#ai-assistants-mcp">AI assistants (MCP)</a> ·
   <a href="#automations">Automations</a> ·
