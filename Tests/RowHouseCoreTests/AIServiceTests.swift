@@ -226,6 +226,53 @@ struct AIFieldTests {
         #expect(stopped.failures.count == 5)
         #expect(rejected.prompts.count == 1)
     }
+
+    @Test func batchesKeepValuesThatChangedWhileWaiting() async throws {
+        let (doc, table, name, _, ai) = try makeTable()
+        let ids = doc.createRecords(in: table, values: [[name: "Lamp"], [name: "Desk"]])
+        let generator = GatedGenerator(reply: "Tagline")
+        let batch = Task { await doc.generateAIValues(fieldID: ai.id, recordIDs: ids, using: generator, maxConcurrent: 2) }
+        await generator.waitForRequests(2)
+        doc.setCell(recordID: ids[0], fieldID: ai.id, text: "Typed meanwhile")
+        await generator.open()
+        let result = await batch.value
+        #expect(result.generated == 1)
+        #expect(result.keptNewer == [ids[0]])
+        #expect(doc.record(ids[0])?[ai.id] == "Typed meanwhile")
+        #expect(doc.record(ids[1])?[ai.id] == "Tagline")
+    }
+}
+
+/// Holds every request until `open()`, so a test can change the base while requests are out.
+private actor GatedGenerator: AITextGenerating {
+    private let reply: String
+    private var requests = 0
+    private var isOpen = false
+    private var waitingRequests: [CheckedContinuation<Void, Never>] = []
+    private var waitingCounts: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(reply: String) {
+        self.reply = reply
+    }
+
+    func generateText(prompt: String, model: String?) async throws -> String {
+        requests += 1
+        for (count, continuation) in waitingCounts where requests >= count { continuation.resume() }
+        waitingCounts.removeAll { requests >= $0.0 }
+        if !isOpen { await withCheckedContinuation { waitingRequests.append($0) } }
+        return reply
+    }
+
+    func waitForRequests(_ count: Int) async {
+        if requests >= count { return }
+        await withCheckedContinuation { waitingCounts.append((count, $0)) }
+    }
+
+    func open() {
+        isOpen = true
+        waitingRequests.forEach { $0.resume() }
+        waitingRequests = []
+    }
 }
 
 /// Returns a fixed reply (or error) and remembers what it was asked.

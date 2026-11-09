@@ -206,3 +206,98 @@ struct StorageTests {
         }
     }
 }
+
+@Suite("Storage lifecycle")
+struct StorageLifecycleTests {
+    private func op(_ wall: Int64, _ id: String, _ name: String) -> ChangeOperation {
+        ChangeOperation(ts: HLC(wall: wall, counter: 0, node: "devA"), kind: .table, id: id, set: ["name": .string(name)])
+    }
+
+    @Test func ownSegmentsArrivingAfterLoadAreReadBeforeASnapshotCoversThem() throws {
+        let entry = try TestSupport.makePackage()
+        let storage = BaseStorage(packageURL: entry.url, deviceID: "devA")
+        var state = storage.loadAll().state
+        let written = op(10, "tbl1", "Written here")
+        storage.append([written])
+        storage.flush()
+        state.apply(written)
+
+        // A segment of this Mac that iCloud delivers only now, such as one that was evicted at load.
+        var line = op(5, "tbl2", "Arrived late").json.serialized()
+        line.append(UInt8(ascii: "\n"))
+        try line.write(to: entry.url.appendingPathComponent("devices/devA/log-0000000000001-LATE01.jsonl"))
+
+        // A snapshot written before the next poll must not claim it.
+        storage.writeSnapshot(state)
+        storage.flush()
+        let reloaded = BaseStorage(packageURL: entry.url, deviceID: "devA").loadAll().state
+        #expect(reloaded.entity(.table, "tbl1") != nil)
+        #expect(reloaded.entity(.table, "tbl2") != nil)
+
+        // The next poll reads it, once.
+        #expect(storage.pollChanges().ops.map(\.id) == ["tbl2"])
+        #expect(storage.pollChanges().ops.isEmpty)
+    }
+
+    @Test func writesNeverRecreateABaseThatWasMovedAway() throws {
+        let entry = try TestSupport.makePackage()
+        let storage = BaseStorage(packageURL: entry.url, deviceID: "devA")
+        _ = storage.loadAll()
+        let moved = entry.url.deletingLastPathComponent().appendingPathComponent("Moved.rowhouse")
+        try FileManager.default.moveItem(at: entry.url, to: moved)
+
+        storage.append([op(1, "tbl1", "Late edit")])
+        storage.writeSnapshot(BaseState())
+        storage.flush()
+        #expect(!FileManager.default.fileExists(atPath: entry.url.path))
+        #expect(storage.takeWriteError() is BaseStorage.WriteError)
+        #expect(throws: BaseStorage.WriteError.self) { try storage.importAttachment(data: Data("x".utf8), filename: "x.txt") }
+    }
+
+    @Test func aFailedSnapshotIsNotReportedAsUnsavedEdits() throws {
+        let entry = try TestSupport.makePackage()
+        let storage = BaseStorage(packageURL: entry.url, deviceID: "devA")
+        var state = storage.loadAll().state
+        let edit = op(1, "tbl1", "Saved")
+        storage.append([edit])
+        storage.flush()
+        state.apply(edit)
+        // A folder where the snapshot file should be makes the snapshot write fail.
+        try FileManager.default.createDirectory(at: entry.url.appendingPathComponent("devices/devA/snapshot.json"), withIntermediateDirectories: true)
+
+        storage.writeSnapshot(state)
+        storage.flush()
+        #expect(storage.takeWriteError() == nil)
+        #expect(storage.snapshotError != nil)
+    }
+
+    @Test @MainActor func theLibraryKeepsKnownBasesWhileTheyAreBrieflyUnreadable() throws {
+        let fm = FileManager.default
+        let root = TestSupport.tempDirectory()
+        let library = Library(rootURL: root)
+        let entry = try library.createPackage(named: "Plans")
+        library.refresh()
+        #expect(library.entries.map(\.baseID) == [entry.baseID])
+
+        // The folder cannot be listed for a moment (privacy settings, iCloud): the base is not gone.
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
+        library.refresh()
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        #expect(library.entries.map(\.baseID) == [entry.baseID])
+        #expect(library.lastError != nil)
+        library.refresh()
+        #expect(library.lastError == nil)
+
+        // The manifest is being downloaded by iCloud: still there.
+        let manifest = entry.url.appendingPathComponent("manifest.json")
+        let placeholder = entry.url.appendingPathComponent(".manifest.json.icloud")
+        try fm.moveItem(at: manifest, to: placeholder)
+        library.refresh()
+        #expect(library.entries.map(\.baseID) == [entry.baseID])
+
+        // No manifest at all: gone.
+        try fm.removeItem(at: placeholder)
+        library.refresh()
+        #expect(library.entries.isEmpty)
+    }
+}
