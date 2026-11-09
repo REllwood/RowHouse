@@ -135,12 +135,13 @@ private struct HostInfo: View {
     }
 }
 
-/// Edits one automation. Edits go to a local draft that's saved shortly after typing stops.
+/// Edits one automation. Edits go to a draft that is saved shortly after typing stops. Saving applies
+/// only what was edited, and changes saved elsewhere reach the draft while it is open.
 struct AutomationEditor: View {
     let session: BaseSession
     let engine: AutomationEngine
     let automationID: String
-    @State private var draft: AutomationModel?
+    @State private var draft: AutomationDraft?
     @State private var saveTask: Task<Void, Never>?
     @State private var tab = 0
     @State private var testing = false
@@ -151,7 +152,7 @@ struct AutomationEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let binding = Binding($draft) {
+            if let binding = Binding($draft)?.model {
                 header(binding)
                 Divider()
                 if tab == 0 {
@@ -178,22 +179,25 @@ struct AutomationEditor: View {
                 }
             }
         }
-        .onAppear { draft = document.automation(automationID) }
+        .onAppear { draft = document.automation(automationID).map(AutomationDraft.init) }
         .onChange(of: document.automationRevision) { _, _ in
-            // Pick up edits from other Macs when nothing is waiting to be saved here.
-            if saveTask == nil, let fresh = document.automation(automationID), fresh != draft { draft = fresh }
+            // Changes from other Macs, AI assistants or the list arrive even while edits wait to be saved.
+            if let fresh = document.automation(automationID), fresh != draft?.base { draft?.savedVersionChanged(to: fresh) }
         }
         .onChange(of: draft) { _, new in
-            guard let new, new != document.automation(automationID) else { return }
             saveTask?.cancel()
+            saveTask = nil
+            // Undoing back to the saved version leaves nothing to save.
+            guard new?.hasEdits == true else { return }
             saveTask = Task {
                 try? await Task.sleep(for: .milliseconds(450))
                 guard !Task.isCancelled else { return }
-                save(new)
+                save()
             }
         }
         .onDisappear {
-            if let draft, draft != document.automation(automationID) { save(draft) }
+            saveTask?.cancel()
+            save()
         }
         .appDialog(isPresented: $confirmDelete) {
             .confirm("Delete this automation?", confirmTitle: "Delete Automation", destructive: true)
@@ -202,9 +206,11 @@ struct AutomationEditor: View {
         }
     }
 
-    private func save(_ model: AutomationModel) {
+    private func save() {
         saveTask = nil
-        document.updateAutomation(automationID) { $0 = model }
+        guard let pending = draft, pending.hasEdits else { return }
+        document.updateAutomation(automationID) { $0 = pending.applied(to: $0) }
+        if let saved = document.automation(automationID) { draft?.saved(as: saved) }
     }
 
     private func header(_ automation: Binding<AutomationModel>) -> some View {
@@ -250,7 +256,7 @@ struct AutomationEditor: View {
     }
 
     private func test() {
-        if let draft { save(draft) }
+        save()
         testing = true
         testResult = nil
         Task {
