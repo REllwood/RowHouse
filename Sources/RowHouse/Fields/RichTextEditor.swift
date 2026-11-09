@@ -14,7 +14,7 @@ struct RichTextEditor: View {
 
     enum Mode: Hashable { case write, preview }
 
-    @State private var draft = ""
+    @State private var draft = TextDraft(stored: "")
     @State private var loaded = false
     @State private var mode: Mode = .write
     @StateObject private var controller = MarkdownEditorController()
@@ -44,10 +44,10 @@ struct RichTextEditor: View {
             }
             Group {
                 if mode == .write {
-                    MarkdownTextView(text: $draft, controller: controller) { commit(draft) }
+                    MarkdownTextView(text: $draft.text, controller: controller) { draft.commitIfEdited(commit) }
                 } else {
                     ScrollView {
-                        RichTextPreview(markdown: draft)
+                        RichTextPreview(markdown: draft.text)
                             .padding(8)
                     }
                 }
@@ -56,24 +56,24 @@ struct RichTextEditor: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(controller.isEditing ? 0.25 : 0.1)))
         }
-        .onChange(of: draft) { _, new in
-            if commitOnChange && loaded { commit(new) }
+        .onChange(of: draft.text) { _, _ in
+            if commitOnChange && loaded { draft.commitIfEdited(commit) }
         }
         .onChange(of: text) { _, new in
-            if !controller.isEditing { draft = new }
+            draft.storedTextChanged(to: new)
         }
         .onChange(of: mode) { _, new in
-            if new == .preview, draft != text { commit(draft) }
+            if new == .preview { draft.commitIfEdited(commit) }
         }
         .onAppear {
             guard !loaded else { return }
-            draft = initialText.map { text + $0 } ?? text
+            draft = TextDraft(stored: text, typed: initialText.map { text + $0 })
             mode = startsInPreview && initialText == nil && !text.isEmpty ? .preview : .write
             loaded = true
             if initialText != nil { controller.focus() }
         }
         .onDisappear {
-            if draft != text { commit(draft) }
+            draft.commitIfEdited(commit)
         }
     }
 

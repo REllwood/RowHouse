@@ -151,36 +151,36 @@ struct CommitTextField: View {
     var prompt: String = ""
     var initialText: String?
     var monospacedDigits = false
-    /// Forms save as you type, because clicking Submit doesn't end editing on macOS.
+    /// Forms save as you type, because clicking Submit does not end editing on macOS.
     var commitOnChange = false
     let commit: (String) -> Void
-    @State private var draft = ""
+    @State private var draft = TextDraft(stored: "")
     @State private var loaded = false
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("", text: $draft, prompt: Text(prompt))
+        TextField("", text: $draft.text, prompt: Text(prompt))
             .textFieldStyle(.roundedBorder)
             .monospacedDigit()
             .focused($focused)
-            .onSubmit { commit(draft) }
-            .onChange(of: draft) { _, new in
-                if commitOnChange && loaded { commit(new) }
+            .onSubmit { draft.commitIfEdited(commit) }
+            .onChange(of: draft.text) { _, _ in
+                if commitOnChange && loaded { draft.commitIfEdited(commit) }
             }
             .onChange(of: focused) { _, isFocused in
-                if !isFocused { commit(draft) }
+                if !isFocused { draft.commitIfEdited(commit) }
             }
             .onChange(of: text) { _, new in
-                if !focused { draft = new }
+                draft.storedTextChanged(to: new)
             }
             .onAppear {
                 guard !loaded else { return }
+                draft = TextDraft(stored: text, typed: initialText)
                 loaded = true
-                draft = initialText ?? text
                 if initialText != nil { focused = true }
             }
             .onDisappear {
-                if draft != text { commit(draft) }
+                draft.commitIfEdited(commit)
             }
     }
 }
@@ -191,14 +191,14 @@ struct CommitTextEditor: View {
     var minHeight: CGFloat = 90
     var commitOnChange = false
     let commit: (String) -> Void
-    @State private var draft = ""
+    @State private var draft = TextDraft(stored: "")
     @State private var loaded = false
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextEditor(text: $draft)
-            .onChange(of: draft) { _, new in
-                if commitOnChange && loaded { commit(new) }
+        TextEditor(text: $draft.text)
+            .onChange(of: draft.text) { _, _ in
+                if commitOnChange && loaded { draft.commitIfEdited(commit) }
             }
             .font(.body)
             .focused($focused)
@@ -208,19 +208,19 @@ struct CommitTextEditor: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(focused ? 0.25 : 0.1)))
             .onChange(of: focused) { _, isFocused in
-                if !isFocused { commit(draft) }
+                if !isFocused { draft.commitIfEdited(commit) }
             }
             .onChange(of: text) { _, new in
-                if !focused { draft = new }
+                draft.storedTextChanged(to: new)
             }
             .onAppear {
                 guard !loaded else { return }
+                draft = TextDraft(stored: text, typed: initialText.map { text + $0 })
                 loaded = true
-                draft = initialText.map { text + $0 } ?? text
                 if initialText != nil { focused = true }
             }
             .onDisappear {
-                if draft != text { commit(draft) }
+                draft.commitIfEdited(commit)
             }
     }
 }
