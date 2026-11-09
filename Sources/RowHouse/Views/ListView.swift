@@ -67,10 +67,8 @@ struct ListView: View {
             }
         }
         .background(Color(nsColor: Theme.gridBackground))
-        .onAppear {
-            commandTarget.addRecord = { addRecord() }
-            commandTarget.expandSelection = {}
-            commandTarget.deleteSelection = {}
+        .recordCommands(commandTarget, for: view) { target in
+            target.addRecord = { addRecord() }
         }
     }
 

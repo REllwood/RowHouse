@@ -36,13 +36,11 @@ struct KanbanView: View {
                 }
             }
         }
-        .onAppear {
-            commandTarget.addRecord = {
+        .recordCommands(commandTarget, for: view) { target in
+            target.addRecord = {
                 let id = document.createRecord(in: view.tableID)
                 state.expandedRecord = ExpandedRecord(baseID: session.id, recordID: id)
             }
-            commandTarget.expandSelection = {}
-            commandTarget.deleteSelection = {}
         }
     }
 

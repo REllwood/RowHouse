@@ -77,10 +77,8 @@ struct ScheduleChart: View {
                 ContentUnavailableView("Choose a start date field", systemImage: view.type.symbolName, description: Text("Pick start and end date fields in the bar above."))
             }
         }
-        .onAppear {
-            commandTarget.addRecord = { addRecord(on: calendar.startOfDay(for: Date())) }
-            commandTarget.expandSelection = {}
-            commandTarget.deleteSelection = {}
+        .recordCommands(commandTarget, for: view) { target in
+            target.addRecord = { addRecord(on: calendar.startOfDay(for: Date())) }
         }
     }
 
