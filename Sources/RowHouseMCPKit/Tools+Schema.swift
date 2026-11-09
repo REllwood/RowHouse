@@ -64,7 +64,7 @@ extension Tools {
         do {
             entry = try ws.library.createPackage(named: name)
         } catch {
-            throw ToolError("Couldn't create the base in \(ws.library.rootURL.path): \(error.localizedDescription)")
+            throw ToolError("Could not create the base in \(ws.library.rootURL.path): \(error.localizedDescription)", code: .failed)
         }
         let session = await AgentSession.open(entry: entry, deviceID: ws.agent.deviceID, deviceName: ws.deviceName)
         session.document.apply(template: template, storage: session.storage)
@@ -94,7 +94,7 @@ extension Tools {
         let session = try await ws.base(try args.string("base"))
         let doc = session.document
         let name = try args.string("name")
-        if let existing = doc.table(named: name) { throw ToolError("A table named \(existing.name) already exists in \(doc.info.name)") }
+        if let existing = doc.table(named: name) { throw ToolError("A table named \(existing.name) already exists in \(doc.info.name)", code: .alreadyExists) }
         let description = try args.optionalText("description")
         let specs = try fieldSpecs(try args.array("fields") ?? [])
 
@@ -117,7 +117,7 @@ extension Tools {
             throw error
         }
         try session.flush()
-        guard let table = doc.table(tableID) else { throw ToolError("The table couldn't be created") }
+        guard let table = doc.table(tableID) else { throw ToolError("The table could not be created", code: .failed) }
         return tableSchema(table, in: doc)
     }
 
@@ -140,7 +140,7 @@ extension Tools {
         let description = try args.optionalText("description")
         guard name != nil || description != nil else { throw ToolError("Pass a new name or description") }
         if let name {
-            if let other = doc.table(named: name), other.id != table.id { throw ToolError("A table named \(other.name) already exists in \(doc.info.name)") }
+            if let other = doc.table(named: name), other.id != table.id { throw ToolError("A table named \(other.name) already exists in \(doc.info.name)", code: .alreadyExists) }
             doc.renameTable(table.id, to: name)
         }
         if let description { doc.updateTableDescription(table.id, description) }
@@ -185,7 +185,7 @@ extension Tools {
         let options = try FieldOptionsCoding.apply(parsed.options, to: FieldOptions(), type: parsed.type, target: target, document: doc, resolveReferences: true)
         let id = doc.createField(in: table.id, name: parsed.name, type: parsed.type, options: options, description: parsed.description ?? "")
         try session.flush()
-        guard let field = doc.field(id) else { throw ToolError("The field couldn't be created") }
+        guard let field = doc.field(id) else { throw ToolError("The field could not be created", code: .failed) }
         return fieldSchema(field, in: doc)
     }
 
@@ -215,7 +215,7 @@ extension Tools {
         let rawOptions = try args.object("options")
         guard name != nil || description != nil || rawOptions != nil else { throw ToolError("Pass a new name, description or options") }
         if let name, let other = doc.field(named: name, in: table.id), other.id != field.id {
-            throw ToolError("A field named \(other.name) already exists in \(table.name)")
+            throw ToolError("A field named \(other.name) already exists in \(table.name)", code: .alreadyExists)
         }
         var options: FieldOptions?
         if let rawOptions {
@@ -253,7 +253,7 @@ extension Tools {
             guard let name = object["name"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
                 throw ToolError("Field \(i + 1) needs a name")
             }
-            guard names.insert(name.lowercased()).inserted else { throw ToolError("There's already a field named \(name)") }
+            guard names.insert(name.lowercased()).inserted else { throw ToolError("There is already a field named \(name)", code: .alreadyExists) }
             guard let rawType = object["type"]?.stringValue else { throw ToolError("\(name) needs a type") }
             let (type, implied) = try fieldType(rawType)
             var rawOptions = implied

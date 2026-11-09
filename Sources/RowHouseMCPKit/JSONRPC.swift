@@ -28,13 +28,42 @@ enum JSONRPC {
     }
 }
 
-/// A tool failure the model can act on. It's reported as a tool result with `isError: true`, not as a
+/// A tool failure the model can act on. It is reported as a tool result with `isError: true`, not as a
 /// protocol error, so the model sees the message and can correct its call.
 struct ToolError: Error, CustomStringConvertible {
-    var message: String
+    /// What kind of failure this is, so an assistant can decide what to do next without parsing the
+    /// message. Sent as `code`, with `retryable`, in the result's structured content.
+    enum Code: String {
+        /// An argument is missing, malformed or not allowed. The call has to change.
+        case invalidArgument = "invalid_argument"
+        /// No base, table, field, view or record matches. The message lists what there is.
+        case notFound = "not_found"
+        /// A name matches several things. Pass an id instead.
+        case ambiguous
+        /// Something with that name already exists.
+        case alreadyExists = "already_exists"
+        /// The library folder cannot be read, usually until the user changes a macOS privacy setting.
+        case libraryUnavailable = "library_unavailable"
+        /// The change was made but is not on disk yet. Repeating the call would make it twice.
+        case notSaved = "not_saved"
+        /// Something failed that may work if tried again.
+        case failed
 
-    init(_ message: String) {
+        /// Whether repeating the same call unchanged might succeed.
+        var isRetryable: Bool {
+            switch self {
+            case .libraryUnavailable, .failed: true
+            case .invalidArgument, .notFound, .ambiguous, .alreadyExists, .notSaved: false
+            }
+        }
+    }
+
+    var message: String
+    var code: Code
+
+    init(_ message: String, code: Code = .invalidArgument) {
         self.message = message
+        self.code = code
     }
 
     var description: String { message }

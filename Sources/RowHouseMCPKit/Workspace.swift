@@ -33,9 +33,9 @@ final class Workspace {
 
     static func accessError(root: URL, detail: String) -> ToolError {
         ToolError("""
-            Can't read the RowHouse library at \(root.path). \(detail)
+            Cannot read the RowHouse library at \(root.path). \(detail)
             If the folder is in iCloud Drive, macOS may be blocking the app that started this server. Open System Settings › Privacy & Security › Files & Folders, find that app (for example Claude, Codex, Terminal or your code editor) and turn on iCloud Drive (or the folder's location), then try again. Setting the environment variable ROWHOUSE_LIBRARY_PATH changes which folder the server uses.
-            """)
+            """, code: .libraryUnavailable)
     }
 
     /// The open session for a base, pulling in recent changes from other devices first.
@@ -67,11 +67,11 @@ final class Workspace {
         if matches.count == 1 { return matches[0] }
         if matches.count > 1 {
             let ids = matches.map(\.entry.baseID).sorted().joined(separator: ", ")
-            throw ToolError("Several bases are named \(key) (\(ids)); pass the base id instead.")
+            throw ToolError("Several bases are named \(key) (\(ids)); pass the base id instead.", code: .ambiguous)
         }
-        if all.isEmpty { throw ToolError("No base named \(key). There are no bases yet; create one with create_base.") }
+        if all.isEmpty { throw ToolError("No base named \(key). There are no bases yet; create one with create_base.", code: .notFound) }
         let names = all.map { "\($0.document.info.name) (\($0.entry.baseID))" }.sorted().joined(separator: ", ")
-        throw ToolError("No base named \(key). Bases: \(names)")
+        throw ToolError("No base named \(key). Bases: \(names)", code: .notFound)
     }
 
     func adopt(_ session: AgentSession) {
@@ -121,14 +121,14 @@ struct BaseLookup {
         if let t = document.table(key) { return t }
         if let t = document.table(named: key) { return t }
         let names = document.tables.map(\.name).joined(separator: ", ")
-        throw ToolError("No table named \(key) in base \(baseName). Tables: \(names.isEmpty ? "none" : names)")
+        throw ToolError("No table named \(key) in base \(baseName). Tables: \(names.isEmpty ? "none" : names)", code: .notFound)
     }
 
     func field(_ key: String, in table: TableModel) throws(ToolError) -> FieldModel {
         if let f = document.field(key), f.tableID == table.id { return f }
         if let f = document.field(named: key, in: table.id) { return f }
         let names = document.fields(in: table.id).map(\.name).joined(separator: ", ")
-        throw ToolError("No field named \(key) in table \(table.name). Fields: \(names)")
+        throw ToolError("No field named \(key) in table \(table.name). Fields: \(names)", code: .notFound)
     }
 
     func view(_ key: String, in table: TableModel) throws(ToolError) -> ViewModel {
@@ -138,7 +138,7 @@ struct BaseLookup {
             return v
         }
         let names = views.map(\.name).joined(separator: ", ")
-        throw ToolError("No view named \(key) in table \(table.name). Views: \(names.isEmpty ? "none" : names)")
+        throw ToolError("No view named \(key) in table \(table.name). Views: \(names.isEmpty ? "none" : names)", code: .notFound)
     }
 
     /// A record by id, or by primary field value within `table` (or any table when none is given).
@@ -154,10 +154,10 @@ struct BaseLookup {
         if matches.count == 1 { return matches[0] }
         if matches.count > 1 {
             let places = matches.prefix(10).map { "\($0.id) in \(document.table($0.tableID)?.name ?? "")" }.joined(separator: ", ")
-            throw ToolError("\(matches.count) records are called \(key) (\(places)); pass a record id instead.")
+            throw ToolError("\(matches.count) records are called \(key) (\(places)); pass a record id instead.", code: .ambiguous)
         }
-        if let table { throw ToolError("No record \(key) in table \(table.name). Pass a record id (rec…) or the primary field value.") }
-        throw ToolError("No record \(key) in base \(baseName). Pass a record id (rec…).")
+        if let table { throw ToolError("No record \(key) in table \(table.name). Pass a record id (rec…) or the primary field value.", code: .notFound) }
+        throw ToolError("No record \(key) in base \(baseName). Pass a record id (rec…).", code: .notFound)
     }
 
     /// Several records of one table, checked before anything is written.

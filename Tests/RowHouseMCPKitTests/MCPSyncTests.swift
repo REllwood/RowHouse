@@ -178,8 +178,13 @@ struct MCPSyncTests {
             for file in files { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
             h.cleanUp()
         }
-        let message = await h.callError("create_records", ["base": base["id"] ?? .null, "table": "Table 1", "records": [["fields": ["Name": "Lost"]]]])
-        #expect(message.contains("couldn't be saved"))
+        let result = await h.callResult("create_records", ["base": base["id"] ?? .null, "table": "Table 1", "records": [["fields": ["Name": "Lost"]]]])
+        let message = result["content"]?.arrayValue?.first?["text"]?.stringValue ?? ""
+        #expect(message.contains("could not be written"))
+        #expect(message.contains("Do not repeat the call"))
+        // An assistant must not retry: the record was made and is saved with the next snapshot.
+        #expect(result["structuredContent"]?["code"] == "not_saved")
+        #expect(result["structuredContent"]?["retryable"] == false)
     }
 
     @Test func anUnreadableLibraryExplainsHowToGrantAccess() async throws {
@@ -190,7 +195,7 @@ struct MCPSyncTests {
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: h.libraryURL.path)
         let message = await h.callError("list_bases")
-        #expect(message.contains("Can't read the RowHouse library at \(h.libraryURL.path)"))
+        #expect(message.contains("Cannot read the RowHouse library at \(h.libraryURL.path)"))
         #expect(message.contains("Privacy & Security › Files & Folders"))
         let create = await h.callError("create_base", ["name": "Nope"])
         #expect(create.contains("Privacy & Security"))

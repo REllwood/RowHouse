@@ -226,13 +226,21 @@ public final class MCPServer {
             let result = try await tool.run(arguments, workspace)
             return toolResult(result, isError: false)
         } catch let error as ToolError {
-            return toolResult(.object(["error": .string(error.message)]), isError: true, text: error.message)
+            return errorResult(error)
         } catch let error as RecordValueCoding.Failure {
-            return toolResult(.object(["error": .string(error.message)]), isError: true, text: error.message)
+            return errorResult(ToolError(error.message))
         } catch {
-            let message = "\(name) failed: \(error.localizedDescription)"
-            return toolResult(.object(["error": .string(message)]), isError: true, text: message)
+            return errorResult(ToolError("\(name) failed: \(error.localizedDescription)", code: .failed))
         }
+    }
+
+    private func errorResult(_ error: ToolError) -> JSONValue {
+        let value: JSONValue = .object([
+            "error": .string(error.message),
+            "code": .string(error.code.rawValue),
+            "retryable": .bool(error.code.isRetryable),
+        ])
+        return toolResult(value, isError: true, text: error.message)
     }
 
     private func toolResult(_ value: JSONValue, isError: Bool, text: String? = nil) -> JSONValue {
@@ -269,6 +277,8 @@ public final class MCPServer {
         - Computed fields (formula, lookup, rollup, count, created/last modified time, created/last modified by, autonumber, button) and attachments are read-only. Collaborator fields take a person's name, email or id.
         - filter_formula uses Airtable formula syntax, e.g. AND({Status} = "Done", {Due} < TODAY()). Records where it is truthy are returned.
         - create_records and update_records take up to 100 records per call; update_records only changes the fields you pass. Unknown select options are an error unless typecast is true, which adds them.
+
+        Failed calls return a code: invalid_argument, not_found, ambiguous, already_exists, library_unavailable, not_saved or failed, with retryable saying whether the same call might work if repeated. Never repeat a call that failed with not_saved: its change was made and will be saved with the next snapshot.
 
         Changes are written straight to the base's files. They appear in the RowHouse app within a second and on the user's other Macs through iCloud Drive, attributed to this assistant. There is no undo from here, so confirm with the user before deleting records or making large changes. The base's record automations run for these edits on its automation host Mac while the RowHouse app is open there.
         """

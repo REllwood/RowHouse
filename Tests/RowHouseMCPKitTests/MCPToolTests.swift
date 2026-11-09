@@ -279,6 +279,34 @@ struct MCPToolTests {
         #expect(unnamed.hasPrefix("2 records are called Unnamed record"))
     }
 
+    @Test func errorsCarryACodeAndWhetherToRetry() async {
+        let h = await harnessWithTasks()
+        defer { h.cleanUp() }
+        func failure(_ tool: String, _ arguments: JSONValue) async -> (code: String?, retryable: Bool?) {
+            let result = await h.callResult(tool, arguments)
+            #expect(result["isError"]?.boolValue == true)
+            let content = result["structuredContent"]
+            #expect(content?["error"]?.stringValue?.isEmpty == false)
+            return (content?["code"]?.stringValue, content?["retryable"]?.boolValue)
+        }
+
+        let missingBase = await failure("list_records", ["base": "Nope", "table": "Tasks"])
+        #expect(missingBase.code == "not_found")
+        #expect(missingBase.retryable == false)
+        let missingField = await failure("list_records", ["base": "Work", "table": "Tasks", "fields": ["Owner"]])
+        #expect(missingField.code == "not_found")
+        let badArgument = await failure("list_records", ["base": "Work", "table": "Tasks", "sort": [["field": "Qty", "direction": "down"]]])
+        #expect(badArgument.code == "invalid_argument")
+        let badValue = await failure("create_records", ["base": "Work", "table": "Tasks", "records": [["fields": ["Qty": "lots"]]]])
+        #expect(badValue.code == "invalid_argument")
+        let duplicateTable = await failure("create_table", ["base": "Work", "name": "Tasks"])
+        #expect(duplicateTable.code == "already_exists")
+
+        _ = await h.call("create_records", ["base": "Work", "table": "Tasks", "records": [["fields": ["Task": "Twin"]], ["fields": ["Task": "Twin"]]]])
+        let twins = await failure("get_record", ["base": "Work", "table": "Tasks", "record_id": "Twin"])
+        #expect(twins.code == "ambiguous")
+    }
+
     @Test func commentsAreSignedByTheAssistant() async {
         let h = await harnessWithTasks()
         defer { h.cleanUp() }

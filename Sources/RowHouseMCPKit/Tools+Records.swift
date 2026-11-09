@@ -324,7 +324,7 @@ extension Tools {
         let id = doc.addComment(to: record.id, text: text)
         try session.flush()
         guard let comment = doc.comments(for: record.id).first(where: { $0.id == id }) else {
-            throw ToolError("The comment couldn't be added")
+            throw ToolError("The comment could not be added", code: .failed)
         }
         return .object(["comment": commentJSON(comment), "recordId": .string(record.id)])
     }
