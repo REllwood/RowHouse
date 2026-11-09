@@ -7,6 +7,11 @@ import UserNotifications
 struct RowHouseApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        // Before any scene exists: a second copy must quit before a window opens a base.
+        InstanceLock.claimOrQuit()
+    }
+
     var body: some Scene {
         WindowGroup("RowHouse", id: "main") {
             MainWindow()
@@ -27,27 +32,6 @@ struct RowHouseApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    private var instanceLock: Int32 = -1
-
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        // Two copies of RowHouse on one Mac would share a device id and interleave writes to the same log.
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("RowHouse", isDirectory: true)
-        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        // A development build ("RowHouse Dev") has its own bundle id and lock, so it can run beside the app.
-        let lockName = AppInfo.isDevelopmentBuild ? "instance-\(Bundle.main.bundleIdentifier ?? "dev").lock" : "instance.lock"
-        let lockPath = support.appendingPathComponent(lockName).path
-        instanceLock = open(lockPath, O_CREAT | O_RDWR, 0o644)
-        if instanceLock >= 0 && flock(instanceLock, LOCK_EX | LOCK_NB) != 0 {
-            let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-                .filter { $0 != NSRunningApplication.current }
-            MainActor.assumeIsolated {
-                _ = AppDialogPresenter.runModal(.notice("RowHouse is already running", message: "Only one copy of RowHouse can run at a time on this Mac."))
-            }
-            others.first?.activate()
-            exit(0)
-        }
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Bundle.main.bundleIdentifier != nil {
             UNUserNotificationCenter.current().delegate = self
@@ -63,10 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { AppModel.shared.closeAll() }
-        if instanceLock >= 0 {
-            flock(instanceLock, LOCK_UN)
-            close(instanceLock)
+        MainActor.assumeIsolated {
+            AppModel.shared.closeAll()
+            InstanceLock.release()
         }
     }
 
