@@ -56,32 +56,11 @@ struct ActionCard: View {
     }
 
     private func move(_ delta: Int) {
-        let j = index + delta
-        guard j >= 0, j < automation.actions.count else { return }
-        automation.actions.swapAt(index, j)
-        // Keep "repeat for each" pointing at the same steps under their new numbers.
-        let a = index + 1, b = j + 1
-        for i in automation.actions.indices {
-            if automation.actions[i].repeatFrom == a {
-                automation.actions[i].repeatFrom = b
-            } else if automation.actions[i].repeatFrom == b {
-                automation.actions[i].repeatFrom = a
-            }
-        }
+        automation.swapActions(index, index + delta)
     }
 
     private func remove() {
-        let removed = index + 1
-        automation.actions.remove(at: index)
-        for i in automation.actions.indices {
-            guard let from = automation.actions[i].repeatFrom else { continue }
-            if from == removed {
-                automation.actions[i].repeatFrom = nil
-                automation.actions[i].repeatPath = nil
-            } else if from > removed {
-                automation.actions[i].repeatFrom = from - 1
-            }
-        }
+        automation.removeAction(at: index)
     }
 
     private func tint(_ kind: ActionKind) -> Color {
