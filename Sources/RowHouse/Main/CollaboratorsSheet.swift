@@ -54,13 +54,16 @@ struct CollaboratorsSheet: View {
         .padding(20)
         .frame(width: 560)
         .onAppear { me = Me.personID(in: document.baseID) }
-        .confirmationDialog("Remove \(confirmRemove?.displayName ?? "")?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })) {
-            Button("Remove", role: .destructive) {
-                if let person = confirmRemove { document.removePerson(person.id) }
-                confirmRemove = nil
-            }
-        } message: {
-            Text("They disappear from collaborator cells and can no longer be chosen. You can undo this with ⌘Z.")
+        .appDialog(item: $confirmRemove) { person in
+            .confirm(
+                "Remove \(person.displayName)?",
+                message: "They disappear from collaborator cells and can no longer be chosen. You can undo this with ⌘Z.",
+                confirmTitle: "Remove",
+                destructive: true,
+                symbol: "person.badge.minus"
+            )
+        } onConfirm: { person, _ in
+            document.removePerson(person.id)
         }
     }
 

@@ -54,9 +54,6 @@ struct MainWindow: View {
                 RecordDetailSheet(session: session, expanded: expanded, state: state)
             }
         }
-        .alert(item: Binding(get: { app.alert }, set: { app.alert = $0 })) { alert in
-            Alert(title: Text(alert.title), message: Text(alert.message))
-        }
         .onChange(of: app.library.entries) { _, _ in
             app.syncSessions()
         }
@@ -142,7 +139,7 @@ struct MainWindow: View {
 }
 
 extension MainWindow {
-    /// rowhouse-dev://dev?show=… opens a sheet or window without clicking, so development builds can be
+    /// rowhouse-dev://dev?show=… opens a sheet, window or dialog (show=dialog&style=rename|failure|update) without clicking, so development builds can be
     /// checked and screenshotted. Only development builds ("RowHouse Dev") respond.
     func showForDevelopment(_ q: [String: String]) {
         let base = q["base"] ?? state.destination?.baseID
@@ -161,7 +158,29 @@ extension MainWindow {
         case "findReplace": if let base { state.findReplaceTable = BaseSheetTarget(baseID: base, tableID: table) }
         case "duplicates": if let base { state.duplicatesTable = BaseSheetTarget(baseID: base, tableID: table) }
         case "settings": openSettings()
-        case "checkForUpdates": UpdateChecker.shared.check(.settings)
+        case "checkForUpdates": UpdateChecker.shared.check(q["trigger"] == "menu" ? .menu : .settings)
+        case "dialog":
+            let dialog: AppDialog = switch q["style"] ?? "" {
+            case "rename": .prompt("Rename Base", placeholder: "Name", text: "Project Tracker", confirmTitle: "Rename")
+            case "failure": .failure("Could not export the backup", message: "You do not have permission to save the file in that folder.")
+            case "update":
+                AppDialog(
+                    title: "RowHouse 1.2.0 is available",
+                    message: "You have \(AppInfo.version).",
+                    detail: UpdateChecker.summary(of: String(repeating: "### New\n- **Check for Updates…** is in the RowHouse menu.\n- Settings reopens on the tab you used last.\n", count: 8)),
+                    symbol: "arrow.down",
+                    confirmTitle: "Download",
+                    cancelTitle: "Later"
+                )
+            default:
+                .confirm(
+                    "Move “Project Tracker” to the Trash?",
+                    message: "The base folder is moved to the Trash on this Mac and removed from iCloud Drive on your other Macs. You can restore it from the Trash.",
+                    confirmTitle: "Move to Trash",
+                    destructive: true
+                )
+            }
+            AppDialogPresenter.present(dialog)
         case "close":
             state.newBaseSheet = false
             state.csvImportSheet = false

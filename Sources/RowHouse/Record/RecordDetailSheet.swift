@@ -36,14 +36,12 @@ struct RecordDetailSheet: View {
         }
         .frame(minWidth: 860, idealWidth: 940, minHeight: 560, idealHeight: 740)
         .onAppear { recordID = expanded.recordID }
-        .confirmationDialog("Delete this record?", isPresented: $confirmDelete) {
-            Button("Delete Record", role: .destructive) {
-                let id = recordID
-                dismiss()
-                document.deleteRecords([id])
-            }
-        } message: {
-            Text("You can undo this with ⌘Z.")
+        .appDialog(isPresented: $confirmDelete) {
+            .confirm("Delete this record?", message: "You can undo this with ⌘Z.", confirmTitle: "Delete Record", destructive: true)
+        } onConfirm: { _ in
+            let id = recordID
+            dismiss()
+            document.deleteRecords([id])
         }
     }
 

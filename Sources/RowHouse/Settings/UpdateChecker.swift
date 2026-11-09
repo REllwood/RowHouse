@@ -58,7 +58,9 @@ final class UpdateChecker {
                     if trigger != .settings { offerUpdate() }
                 } else {
                     status = .upToDate
-                    if trigger == .menu { show("You are up to date", "RowHouse \(AppInfo.version) is the latest version.") }
+                    if trigger == .menu {
+                        AppDialogPresenter.present(.notice("You are up to date", message: "RowHouse \(AppInfo.version) is the latest version.", symbol: "checkmark"))
+                    }
                 }
             } catch {
                 let message = (error as? CheckFailure)?.message ?? error.localizedDescription
@@ -68,7 +70,7 @@ final class UpdateChecker {
                     status = previous
                 case .menu:
                     status = .failed(message)
-                    show("Could not check for updates", message)
+                    AppDialogPresenter.present(.failure("Could not check for updates", message: message))
                 case .settings:
                     status = .failed(message)
                 }
@@ -79,13 +81,18 @@ final class UpdateChecker {
     /// Shows what is new in the available version and offers to open its download page.
     func offerUpdate() {
         guard case .available(let version, let page) = status else { return }
-        let alert = NSAlert()
-        alert.messageText = "RowHouse \(version) is available"
         let summary = Self.summary(of: notes)
-        alert.informativeText = "You have \(AppInfo.version)." + (summary.isEmpty ? "" : "\n\n" + summary)
-        alert.addButton(withTitle: "Download")
-        alert.addButton(withTitle: "Later")
-        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(page) }
+        let dialog = AppDialog(
+            title: "RowHouse \(version) is available",
+            message: "You have \(AppInfo.version).",
+            detail: summary.isEmpty ? nil : summary,
+            symbol: "arrow.down",
+            confirmTitle: "Download",
+            cancelTitle: "Later"
+        )
+        AppDialogPresenter.present(dialog) { result in
+            if case .confirmed = result { NSWorkspace.shared.open(page) }
+        }
     }
 
     static func isNewer(_ a: String, than b: String) -> Bool {
@@ -149,12 +156,5 @@ final class UpdateChecker {
     private func record(checkedAt date: Date) {
         lastChecked = date
         UserDefaults.standard.set(date, forKey: Self.lastCheckKey)
-    }
-
-    private func show(_ title: String, _ message: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.runModal()
     }
 }

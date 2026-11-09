@@ -72,13 +72,15 @@ private struct StorageSettings: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog("Switch storage location?", isPresented: Binding(get: { confirmSwitch != nil }, set: { if !$0 { confirmSwitch = nil } })) {
-            Button("Switch") {
-                if let target = confirmSwitch { app.setStorageLocation(target) }
-                confirmSwitch = nil
-            }
-        } message: {
-            Text("RowHouse will show the bases in the new location. Your existing bases stay where they are.")
+        .appDialog(item: $confirmSwitch) { _ in
+            .confirm(
+                "Switch storage location?",
+                message: "RowHouse will show the bases in the new location. Your existing bases stay where they are.",
+                confirmTitle: "Switch",
+                symbol: "externaldrive"
+            )
+        } onConfirm: { target, _ in
+            app.setStorageLocation(target)
         }
     }
 

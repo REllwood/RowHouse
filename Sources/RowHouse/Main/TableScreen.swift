@@ -114,7 +114,7 @@ struct TableScreen: View {
         do {
             try Data(document.exportCSV(view: view).utf8).write(to: url, options: .atomic)
         } catch {
-            app.alert = AppAlert(title: "Export failed", message: error.localizedDescription)
+            app.showAlert(title: "Export failed", message: error.localizedDescription)
         }
     }
 }

@@ -40,11 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if instanceLock >= 0 && flock(instanceLock, LOCK_EX | LOCK_NB) != 0 {
             let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
                 .filter { $0 != NSRunningApplication.current }
+            MainActor.assumeIsolated {
+                _ = AppDialogPresenter.runModal(.notice("RowHouse is already running", message: "Only one copy of RowHouse can run at a time on this Mac."))
+            }
             others.first?.activate()
-            let alert = NSAlert()
-            alert.messageText = "RowHouse is already running"
-            alert.informativeText = "Only one copy of RowHouse can run at a time on this Mac."
-            alert.runModal()
             exit(0)
         }
     }

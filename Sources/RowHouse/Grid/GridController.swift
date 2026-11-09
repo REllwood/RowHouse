@@ -459,45 +459,41 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     private func confirmDeleteField(_ field: FieldModel) {
-        let alert = NSAlert()
-        alert.messageText = "Delete the field “\(field.name)”?"
-        alert.informativeText = "Its values are removed from every record. You can undo this with ⌘Z."
-        alert.addButton(withTitle: "Delete Field")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.hasDestructiveAction = true
-        if let window = tableView.window {
-            alert.beginSheetModal(for: window) { [weak self] response in
-                if response == .alertFirstButtonReturn { self?.document.deleteField(field.id) }
-            }
+        let dialog = AppDialog.confirm(
+            "Delete the field “\(field.name)”?",
+            message: "Its values are removed from every record. You can undo this with ⌘Z.",
+            confirmTitle: "Delete Field",
+            destructive: true
+        )
+        AppDialogPresenter.present(dialog, over: tableView.window) { [weak self] result in
+            if case .confirmed = result { self?.document.deleteField(field.id) }
         }
     }
 
     private func confirmAIGeneration(_ field: FieldModel) {
         let targets = recordIDs.filter { id in document.record(id).map { document.value($0, field).isEmpty } ?? false }
         guard let window = tableView.window else { return }
-        let alert = NSAlert()
         guard !targets.isEmpty else {
-            alert.messageText = "Every record in this view already has a value for “\(field.name)”."
-            alert.beginSheetModal(for: window)
+            AppDialogPresenter.present(.notice("Every record in this view already has a value for “\(field.name)”.", symbol: "sparkles"), over: window)
             return
         }
         let service: AIService
         do {
             service = try AIConfiguration.makeService()
         } catch {
-            alert.messageText = "Claude AI isn't set up yet"
-            alert.informativeText = error.localizedDescription
-            alert.beginSheetModal(for: window)
+            AppDialogPresenter.present(.failure("Claude AI is not set up yet", message: error.localizedDescription), over: window)
             return
         }
-        alert.messageText = targets.count == 1
-            ? "Generate “\(field.name)” for 1 empty record?"
-            : "Generate “\(field.name)” for \(targets.count) empty records?"
-        alert.informativeText = "Each record's prompt, including the values of the fields it mentions, is sent to Anthropic with your API key. Values appear as they arrive and can be undone one by one."
-        alert.addButton(withTitle: "Generate")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
+        let dialog = AppDialog.confirm(
+            targets.count == 1
+                ? "Generate “\(field.name)” for 1 empty record?"
+                : "Generate “\(field.name)” for \(targets.count) empty records?",
+            message: "Each record's prompt, including the values of the fields it mentions, is sent to Anthropic with your API key. Values appear as they arrive and can be undone one by one.",
+            confirmTitle: "Generate",
+            symbol: "sparkles"
+        )
+        AppDialogPresenter.present(dialog, over: window) { [weak self] result in
+            guard case .confirmed = result else { return }
             self?.generateAIValues(field, recordIDs: targets, service: service)
         }
     }
@@ -509,14 +505,11 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
             let result = await document.generateAIValues(fieldID: field.id, recordIDs: targets, using: service)
             self?.aiGenerations.remove(field.id)
             guard let self, !result.failures.isEmpty, let window = self.tableView.window else { return }
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = result.failures.count == 1
-                ? "1 value of “\(field.name)” couldn't be generated"
-                : "\(result.failures.count) values of “\(field.name)” couldn't be generated"
+            let title = result.failures.count == 1
+                ? "1 value of “\(field.name)” could not be generated"
+                : "\(result.failures.count) values of “\(field.name)” could not be generated"
             let generated = result.generated == 1 ? "1 value was generated." : "\(result.generated) values were generated."
-            alert.informativeText = generated + " " + (result.failures.first?.message ?? "")
-            alert.beginSheetModal(for: window, completionHandler: nil)
+            AppDialogPresenter.present(.failure(title, message: generated + " " + (result.failures.first?.message ?? "")), over: window)
         }
     }
 
@@ -1056,18 +1049,18 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     private func saveTemplate(from recordID: String) {
-        let alert = NSAlert()
-        alert.messageText = "Save as Record Template"
-        alert.informativeText = "New records created from this template start with this record's values."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.placeholderString = "Template name"
-        field.stringValue = document.primaryTitle(recordID: recordID)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        document.saveTemplate(named: field.stringValue.trimmingCharacters(in: .whitespaces), from: recordID)
+        let dialog = AppDialog.prompt(
+            "Save as Record Template",
+            message: "New records created from this template start with this record's values.",
+            placeholder: "Template name",
+            text: document.primaryTitle(recordID: recordID),
+            confirmTitle: "Save",
+            symbol: "doc.on.doc"
+        )
+        AppDialogPresenter.present(dialog, over: tableView.window) { [weak self] result in
+            guard case .confirmed(let name) = result else { return }
+            self?.document.saveTemplate(named: name.trimmingCharacters(in: .whitespaces), from: recordID)
+        }
     }
 
     /// New records pick up simple "is" filter values so they stay visible in the filtered view.
