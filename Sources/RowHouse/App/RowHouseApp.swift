@@ -36,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if Bundle.main.bundleIdentifier != nil {
             UNUserNotificationCenter.current().delegate = self
         }
-        UpdateChecker.shared.checkAutomaticallyIfNeeded()
+        MainActor.assumeIsolated { UpdateChecker.shared.startDailyChecks() }
         MainActor.assumeIsolated { StatusItemController.shared.start() }
         MainActor.assumeIsolated { WebhookServer.shared.start() }
     }

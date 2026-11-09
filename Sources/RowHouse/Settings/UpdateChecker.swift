@@ -14,27 +14,41 @@ final class UpdateChecker {
         case idle
         case checking
         case upToDate
-        case available(version: String, page: URL)
+        case available(version: String, page: URL, notes: String)
         case failed(String)
     }
 
     /// Where a check started, which decides how its result is shown.
-    enum Trigger {
+    enum Trigger: Int, Comparable {
         /// The daily background check, which only speaks up when a newer version is out.
         case automatic
-        /// A menu command, which reports every result in an alert.
-        case menu
         /// The Settings button, which shows the result beside the button.
         case settings
+        /// A menu command, which reports every result in an alert.
+        case menu
+
+        static func < (a: Trigger, b: Trigger) -> Bool { a.rawValue < b.rawValue }
     }
 
     private(set) var status: Status = .idle
     private(set) var lastChecked = UserDefaults.standard.object(forKey: UpdateChecker.lastCheckKey) as? Date
-    private var notes = ""
+    /// While a check runs, how its result will be reported: the most direct way anyone asked for it.
+    @ObservationIgnored private var reportAs: Trigger?
+    @ObservationIgnored private var dailyTimer: Timer?
 
     var availableVersion: String? {
-        if case .available(let version, _) = status { return version }
+        if case .available(let version, _, _) = status { return version }
         return nil
+    }
+
+    /// Checks now if a day has passed, then keeps checking once a day while RowHouse runs, which it
+    /// can for weeks from the menu bar.
+    func startDailyChecks() {
+        checkAutomaticallyIfNeeded()
+        guard dailyTimer == nil else { return }
+        dailyTimer = Timer.scheduledTimer(withTimeInterval: 3_600, repeats: true) { _ in
+            MainActor.assumeIsolated { UpdateChecker.shared.checkAutomaticallyIfNeeded() }
+        }
     }
 
     func checkAutomaticallyIfNeeded() {
@@ -44,17 +58,23 @@ final class UpdateChecker {
         check(.automatic)
     }
 
-    func check(_ trigger: Trigger) {
-        guard status != .checking else { return }
+    func check(_ requested: Trigger) {
+        if status == .checking {
+            // Already checking: report the result the way this request needs, too.
+            reportAs = max(reportAs ?? requested, requested)
+            return
+        }
         let previous = status
         status = .checking
+        reportAs = requested
         Task {
             do {
                 let release = try await fetchLatest()
                 record(checkedAt: Date())
+                let trigger = reportAs ?? requested
+                reportAs = nil
                 if Self.isNewer(release.version, than: AppInfo.version) {
-                    notes = release.notes
-                    status = .available(version: release.version, page: release.page)
+                    status = .available(version: release.version, page: release.page, notes: release.notes)
                     if trigger != .settings { offerUpdate() }
                 } else {
                     status = .upToDate
@@ -64,6 +84,8 @@ final class UpdateChecker {
                 }
             } catch {
                 let message = (error as? CheckFailure)?.message ?? error.localizedDescription
+                let trigger = reportAs ?? requested
+                reportAs = nil
                 switch trigger {
                 case .automatic:
                     // A failed background check should not replace what an earlier check found.
@@ -80,7 +102,7 @@ final class UpdateChecker {
 
     /// Shows what is new in the available version and offers to open its download page.
     func offerUpdate() {
-        guard case .available(let version, let page) = status else { return }
+        guard case .available(let version, let page, let notes) = status else { return }
         let summary = Self.summary(of: notes)
         let dialog = AppDialog(
             title: "RowHouse \(version) is available",

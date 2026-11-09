@@ -44,7 +44,12 @@ struct ViewsListPanel: View {
             List {
                 ForEach(views.filter { filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter) }) { view in
                     ViewRowItem(view: view, tint: color(for: view.type), selected: view.id == current?.id, renaming: renamingID == view.id, renameText: $renameText) {
-                        document.renameView(view.id, to: renameText)
+                        // Return, or clicking away. Ignored once the rename was cancelled.
+                        guard renamingID == view.id else { return }
+                        renamingID = nil
+                        let name = renameText.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty, name != view.name { document.renameView(view.id, to: name) }
+                    } cancel: {
                         renamingID = nil
                     }
                     .contentShape(Rectangle())
@@ -132,7 +137,9 @@ private struct ViewRowItem: View {
     let renaming: Bool
     @Binding var renameText: String
     let commit: () -> Void
+    let cancel: () -> Void
     @State private var hovering = false
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -143,7 +150,13 @@ private struct ViewRowItem: View {
             if renaming {
                 TextField("View name", text: $renameText)
                     .textFieldStyle(.plain)
+                    .focused($nameFocused)
                     .onSubmit(commit)
+                    .onExitCommand(perform: cancel)
+                    .onAppear { nameFocused = true }
+                    .onChange(of: nameFocused) { _, focused in
+                        if !focused { commit() }
+                    }
             } else {
                 Text(view.name)
                     .font(.system(size: 13, weight: selected ? .medium : .regular))

@@ -178,22 +178,33 @@ private struct AutomationSettings: View {
 }
 
 private struct LaunchAtLoginToggle: View {
-    @State private var enabled = SMAppService.mainApp.status == .enabled
+    /// What macOS reports, not what was last asked for: registering can leave it waiting for approval.
+    @State private var status = SMAppService.mainApp.status
     @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("Open RowHouse at login", isOn: Binding(get: { enabled }, set: { on in
+            Toggle("Open RowHouse at login", isOn: Binding(get: { status == .enabled || status == .requiresApproval }, set: { on in
                 do {
                     if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                    enabled = on
                     error = nil
                 } catch {
                     self.error = error.localizedDescription
                 }
+                status = SMAppService.mainApp.status
             }))
+            if status == .requiresApproval {
+                HStack(spacing: 6) {
+                    Text("Allow RowHouse in Login Items to finish turning this on.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
+                        .controlSize(.small)
+                }
+            }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
         }
+        .onAppear { status = SMAppService.mainApp.status }
     }
 }
 
@@ -216,7 +227,7 @@ private struct UpdateStatusRow: View {
             if checker.status == .checking {
                 ProgressView().controlSize(.small)
             }
-            if case .available(let version, let page) = checker.status {
+            if case .available(let version, let page, _) = checker.status {
                 Button("Download \(version)") { NSWorkspace.shared.open(page) }
                     .buttonStyle(.borderedProminent)
             }
@@ -230,7 +241,7 @@ private struct UpdateStatusRow: View {
         case .idle: "Updates"
         case .checking: "Checking for updates…"
         case .upToDate: "RowHouse is up to date"
-        case .available(let version, _): "RowHouse \(version) is available"
+        case .available(let version, _, _): "RowHouse \(version) is available"
         case .failed: "Could not check for updates"
         }
     }

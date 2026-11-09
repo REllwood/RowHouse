@@ -12,7 +12,9 @@ struct ScheduleChart: View {
     var state: WindowState
     let commandTarget: GridCommandTarget
     let style: Style
-    @State private var drag: BarDrag?
+    /// The bar being dragged. Gesture state, so it clears itself however the drag ends, including a
+    /// drag cancelled because the bar went away.
+    @GestureState private var drag: BarDrag?
     @State private var hoveredRecord: String?
 
     private var document: BaseDocument { session.document }
@@ -415,10 +417,12 @@ struct ScheduleChart: View {
                 ResizeHandle(visible: hoveredRecord == id || dragging, tint: color.chipText)
                     .gesture(
                         DragGesture(minimumDistance: 1)
-                            .onChanged { value in
-                                drag = BarDrag(recordID: id, resizeDays: Int((value.translation.width / layout.pointsPerDay).rounded()))
+                            .updating($drag) { value, state, _ in
+                                state = BarDrag(recordID: id, resizeDays: days(value, layout))
                             }
-                            .onEnded { _ in commitDrag(startField: startField, endField: endField) }
+                            .onEnded { value in
+                                commitDrag(BarDrag(recordID: id, resizeDays: days(value, layout)), startField: startField, endField: endField)
+                            }
                     )
             }
         }
@@ -428,11 +432,14 @@ struct ScheduleChart: View {
         .onTapGesture { open(id, layout: layout) }
         .gesture(
             DragGesture(minimumDistance: 3)
-                .onChanged { value in
+                .updating($drag) { value, state, _ in
                     guard movable else { return }
-                    drag = BarDrag(recordID: id, moveDays: Int((value.translation.width / layout.pointsPerDay).rounded()))
+                    state = BarDrag(recordID: id, moveDays: days(value, layout))
                 }
-                .onEnded { _ in commitDrag(startField: startField, endField: endField) }
+                .onEnded { value in
+                    guard movable else { return }
+                    commitDrag(BarDrag(recordID: id, moveDays: days(value, layout)), startField: startField, endField: endField)
+                }
         )
         .contextMenu { recordMenu(id, layout: layout) }
         .help(barHelp(id, title: title, layout: layout, violated: violated))
@@ -452,9 +459,11 @@ struct ScheduleChart: View {
         return text
     }
 
-    private func commitDrag(startField: FieldModel, endField: FieldModel?) {
-        guard let current = drag else { return }
-        drag = nil
+    private func days(_ value: DragGesture.Value, _ layout: Layout) -> Int {
+        Int((value.translation.width / layout.pointsPerDay).rounded())
+    }
+
+    private func commitDrag(_ current: BarDrag, startField: FieldModel, endField: FieldModel?) {
         let updates = document.scheduleUpdate(recordID: current.recordID, startField: startField, endField: endField, moveDays: current.moveDays, resizeDays: current.resizeDays, calendar: calendar)
         guard !updates.isEmpty else { return }
         document.updateRecord(current.recordID, values: updates, actionName: current.resizeDays != 0 ? "Change Dates" : "Reschedule")

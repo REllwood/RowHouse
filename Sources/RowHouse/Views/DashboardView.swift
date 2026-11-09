@@ -65,6 +65,9 @@ struct DashboardView: View {
             }
         }
         .background(Theme.canvasBackground)
+        .onChange(of: view.config.isLocked) { _, locked in
+            if locked { editing = false }
+        }
     }
 
     private func header(recordCount: Int) -> some View {
@@ -90,6 +93,8 @@ struct DashboardView: View {
                     Label("Edit dashboard", systemImage: "slider.horizontal.3")
                 }
                 .buttonStyle(.bordered)
+                .disabled(view.config.isLocked)
+                .help(view.config.isLocked ? "This view is locked. Unlock it to change the dashboard." : "")
             }
         }
         .padding(.horizontal, 24)
@@ -110,6 +115,8 @@ struct DashboardView: View {
             Label("Add widget", systemImage: "plus")
         }
         .menuStyle(.borderlessButton)
+        // A locked view keeps its layout, so changes would be dropped.
+        .disabled(view.config.isLocked)
     }
 
     struct Placed {
