@@ -23,10 +23,10 @@ struct ViewBar: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: Theme.barHeight)
         .background(Color(nsColor: .windowBackgroundColor))
-        .alert("Rename View", isPresented: $renaming) {
-            TextField("Name", text: $nameText)
-            Button("Rename") { document.renameView(view.id, to: nameText) }
-            Button("Cancel", role: .cancel) {}
+        .appDialog(isPresented: $renaming) {
+            .prompt("Rename View", placeholder: "Name", text: nameText, confirmTitle: "Rename")
+        } onConfirm: { name in
+            document.renameView(view.id, to: name)
         }
     }
 

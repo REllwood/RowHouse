@@ -63,12 +63,15 @@ struct TrashSheet: View {
         }
         .padding(20)
         .frame(width: 680, height: 520)
-        .confirmationDialog("Erase deleted records?", isPresented: $confirmEmpty) {
-            Button("Erase", role: .destructive) {
-                document.emptyTrash(document.trashItems().filter { $0.kind == .record || $0.kind == .comment })
-            }
-        } message: {
-            Text("The contents of deleted records and comments are erased on every Mac. Tables, fields and automations stay restorable.")
+        .appDialog(isPresented: $confirmEmpty) {
+            .confirm(
+                "Erase deleted records?",
+                message: "The contents of deleted records and comments are erased on every Mac. Tables, fields and automations stay restorable.",
+                confirmTitle: "Erase",
+                destructive: true
+            )
+        } onConfirm: { _ in
+            document.emptyTrash(document.trashItems().filter { $0.kind == .record || $0.kind == .comment })
         }
     }
 

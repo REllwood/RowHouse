@@ -39,15 +39,15 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             SidebarFooter(state: state)
         }
-        .alert(renaming?.title ?? "Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Rename") { commitRename() }
-            Button("Cancel", role: .cancel) { renaming = nil }
+        .appDialog(item: $renaming) { target in
+            .prompt(target.title, placeholder: "Name", text: renameText, confirmTitle: "Rename")
+        } onConfirm: { target, name in
+            commitRename(target, to: name)
         }
-        .confirmationDialog(confirmDelete?.title ?? "", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
-            Button(confirmDelete?.button ?? "Delete", role: .destructive) { performDelete() }
-        } message: {
-            Text(confirmDelete?.message ?? "")
+        .appDialog(item: $confirmDelete) { target in
+            .confirm(target.title, message: target.message, confirmTitle: target.button, destructive: true)
+        } onConfirm: { target, _ in
+            performDelete(target)
         }
         .sheet(isPresented: Binding(get: { collaboratorsBase != nil }, set: { if !$0 { collaboratorsBase = nil } })) {
             if let document = app.session(collaboratorsBase)?.document {
@@ -91,19 +91,16 @@ struct SidebarView: View {
         }
     }
 
-    private func commitRename() {
-        guard let target = renaming else { return }
+    private func commitRename(_ target: RenameTarget, to name: String) {
         switch target {
         case .base(let id):
-            app.session(id)?.document.updateBaseInfo(name: renameText.trimmingCharacters(in: .whitespaces))
+            app.session(id)?.document.updateBaseInfo(name: name.trimmingCharacters(in: .whitespaces))
         case .table(let base, let table):
-            app.session(base)?.document.renameTable(table, to: renameText)
+            app.session(base)?.document.renameTable(table, to: name)
         }
-        renaming = nil
     }
 
-    private func performDelete() {
-        guard let target = confirmDelete else { return }
+    private func performDelete(_ target: DeleteTarget) {
         switch target {
         case .base(let id, _):
             if state.destination?.baseID == id { state.destination = nil }
@@ -116,7 +113,6 @@ struct SidebarView: View {
             }
             doc.deleteTable(table)
         }
-        confirmDelete = nil
     }
 }
 

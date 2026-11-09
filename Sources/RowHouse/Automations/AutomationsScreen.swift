@@ -195,8 +195,10 @@ struct AutomationEditor: View {
         .onDisappear {
             if let draft, draft != document.automation(automationID) { save(draft) }
         }
-        .confirmationDialog("Delete this automation?", isPresented: $confirmDelete) {
-            Button("Delete Automation", role: .destructive) { document.deleteAutomation(automationID) }
+        .appDialog(isPresented: $confirmDelete) {
+            .confirm("Delete this automation?", confirmTitle: "Delete Automation", destructive: true)
+        } onConfirm: { _ in
+            document.deleteAutomation(automationID)
         }
     }
 
@@ -458,10 +460,16 @@ private struct WebhookTriggerOptions: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .confirmationDialog("Regenerate the webhook token?", isPresented: $confirmRegenerate) {
-            Button("Regenerate", role: .destructive) { automation.trigger.webhookToken = Webhooks.makeToken() }
-        } message: {
-            Text("The current URL stops working. Update anything that calls it.")
+        .appDialog(isPresented: $confirmRegenerate) {
+            .confirm(
+                "Regenerate the webhook token?",
+                message: "The current URL stops working. Update anything that calls it.",
+                confirmTitle: "Regenerate",
+                destructive: true,
+                symbol: "arrow.triangle.2.circlepath"
+            )
+        } onConfirm: { _ in
+            automation.trigger.webhookToken = Webhooks.makeToken()
         }
     }
 

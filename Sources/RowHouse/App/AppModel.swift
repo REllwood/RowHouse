@@ -15,7 +15,6 @@ final class AppModel {
     private(set) var engines: [String: AutomationEngine] = [:]
     private(set) var loading: Set<String> = []
     private(set) var loadErrors: [String: String] = [:]
-    var alert: AppAlert?
 
     @ObservationIgnored private let services = SystemAutomationServices()
     @ObservationIgnored private var mentionObservers: [String: UUID] = [:]
@@ -43,6 +42,11 @@ final class AppModel {
     func engine(_ baseID: String?) -> AutomationEngine? {
         guard let baseID else { return nil }
         return engines[baseID]
+    }
+
+    /// Reports a failure over the window being worked in, after any sheet in front of it has closed.
+    func showAlert(title: String, message: String) {
+        AppDialogPresenter.present(.failure(title, message: message), over: NSApp.mainWindow)
     }
 
     /// Opens sessions for bases that appeared in the library and closes ones that disappeared.
@@ -118,7 +122,7 @@ final class AppModel {
             startServices(for: session)
             return entry.baseID
         } catch {
-            alert = AppAlert(title: "Couldn't create the base", message: error.localizedDescription)
+            showAlert(title: "Could not create the base", message: error.localizedDescription)
             return nil
         }
     }
@@ -163,7 +167,7 @@ final class AppModel {
             startServices(for: session)
             return entry.baseID
         } catch {
-            alert = AppAlert(title: "Couldn't import the CSV", message: error.localizedDescription)
+            showAlert(title: "Could not import the CSV", message: error.localizedDescription)
             return nil
         }
     }
@@ -177,7 +181,7 @@ final class AppModel {
         do {
             try library.trash(entry)
         } catch {
-            alert = AppAlert(title: "Couldn't move the base to the Trash", message: error.localizedDescription)
+            showAlert(title: "Could not move the base to the Trash", message: error.localizedDescription)
         }
         syncSessions()
     }
@@ -204,7 +208,7 @@ final class AppModel {
             engines[copy.baseID] = AutomationEngine(session: session, services: services)
             return copy.baseID
         } catch {
-            alert = AppAlert(title: "Couldn't duplicate the base", message: error.localizedDescription)
+            showAlert(title: "Could not duplicate the base", message: error.localizedDescription)
             return nil
         }
     }
@@ -220,7 +224,7 @@ final class AppModel {
         do {
             try Library.exportBackup(of: entry.url, to: url)
         } catch {
-            alert = AppAlert(title: "Couldn't export the backup", message: error.localizedDescription)
+            showAlert(title: "Could not export the backup", message: error.localizedDescription)
         }
     }
 
@@ -238,7 +242,7 @@ final class AppModel {
             startServices(for: session)
             return entry.baseID
         } catch {
-            alert = AppAlert(title: "Couldn't restore the backup", message: error.localizedDescription)
+            showAlert(title: "Could not restore the backup", message: error.localizedDescription)
             return nil
         }
     }
@@ -269,11 +273,6 @@ final class AppModel {
     }
 }
 
-struct AppAlert: Identifiable {
-    let id = UUID()
-    var title: String
-    var message: String
-}
 
 /// Where the user is in one window.
 enum Destination: Hashable, Codable {
