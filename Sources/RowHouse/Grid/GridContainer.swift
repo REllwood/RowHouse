@@ -87,6 +87,7 @@ struct GridRepresentable: NSViewRepresentable {
         }
         controller.callbacks.collapsedGroups = { state.collapsedGroups[viewID] ?? [] }
         controller.callbacks.runButton = runButton
+        commandTarget.claimRecordCommands(for: viewID)
         commandTarget.addRecord = { [weak controller] in controller?.addRecord() }
         commandTarget.addRecordFromTemplate = { [weak controller] in controller?.addRecord(from: $0) }
         commandTarget.expandSelection = { [weak controller] in controller?.expandSelection() }

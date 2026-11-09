@@ -81,6 +81,9 @@ public struct AIGenerationFailure: Hashable, Sendable {
 public struct AIBatchResult: Sendable {
     public var generated = 0
     public var failures: [AIGenerationFailure] = []
+    /// Records whose value changed while their request was out (typed by someone, or synced from
+    /// another Mac or an AI assistant). The newer value was kept.
+    public var keptNewer: [String] = []
 
     public init() {}
 }
@@ -170,10 +173,13 @@ extension BaseDocument {
             return result
         }
         var prompts: [(recordID: String, prompt: String)] = []
+        // Each result only replaces the value the record had when its prompt was made.
+        var startingValues: [String: JSONValue] = [:]
         for id in recordIDs {
             guard let record = record(id) else { continue }
             do {
                 prompts.append((id, try renderAIPrompt(field: field, record: record)))
+                startingValues[id] = record[fieldID]
             } catch {
                 result.failures.append(AIGenerationFailure(recordID: id, message: error.localizedDescription))
             }
@@ -201,9 +207,12 @@ extension BaseDocument {
                 done += 1
                 switch outcome {
                 case .success(let text):
-                    if record(id) != nil, self.field(fieldID)?.type == .aiText {
+                    guard let current = record(id), self.field(fieldID)?.type == .aiText else { break }
+                    if current[fieldID] == startingValues[id] {
                         updateRecord(id, values: [fieldID: .string(text)], actionName: "Generate \(field.name)", origin: origin)
                         result.generated += 1
+                    } else {
+                        result.keptNewer.append(id)
                     }
                 case .failure(let error):
                     result.failures.append(AIGenerationFailure(recordID: id, message: error.localizedDescription))

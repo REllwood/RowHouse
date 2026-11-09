@@ -88,6 +88,8 @@ public final class Library {
             defaults.set(url.path, forKey: Self.customPathKey)
             rootURL = url
         }
+        // The last known bases belong to the old folder.
+        entries = []
         prepareRoot()
         refresh()
         startWatching()
@@ -118,6 +120,9 @@ public final class Library {
         }
     }
 
+    /// Re-reads which bases the folder holds. A base counts as gone only when its folder or manifest
+    /// has gone. While the folder cannot be listed, or a known base's manifest is being downloaded or
+    /// written, the last known list stays, so open bases and their automations keep running.
     public func refresh() {
         let fm = FileManager.default
         let urls: [URL]
@@ -125,20 +130,37 @@ public final class Library {
             urls = try fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
             if lastError != nil { lastError = nil }
         } catch {
-            // Usually macOS privacy settings: the app hasn't been allowed into iCloud Drive yet.
-            let message = "RowHouse can't open \(rootURL.path): \(error.localizedDescription)"
+            // Usually macOS privacy settings: the app has not been allowed into iCloud Drive yet.
+            let message = "RowHouse cannot open \(rootURL.path): \(error.localizedDescription)"
             if lastError != message { lastError = message }
-            urls = []
+            return
         }
+        let known = Dictionary(entries.map { ($0.url.standardizedFileURL, $0) }, uniquingKeysWith: { first, _ in first })
         var found: [LibraryEntry] = []
         var seen = Set<String>()
         for url in urls where url.pathExtension == BaseStorage.packageExtension {
-            guard let manifest = BaseStorage.readManifest(at: url), !seen.contains(manifest.baseID) else { continue }
-            seen.insert(manifest.baseID)
-            found.append(LibraryEntry(baseID: manifest.baseID, url: url, initialName: manifest.name, createdAt: manifest.createdAt))
+            if let manifest = BaseStorage.readManifest(at: url) {
+                guard !seen.contains(manifest.baseID) else { continue }
+                seen.insert(manifest.baseID)
+                found.append(LibraryEntry(baseID: manifest.baseID, url: url, initialName: manifest.name, createdAt: manifest.createdAt))
+            } else if Self.manifestIsArriving(in: url), let previous = known[url.standardizedFileURL], !seen.contains(previous.baseID) {
+                seen.insert(previous.baseID)
+                found.append(previous)
+            }
         }
         found.sort { ($0.createdAt, $0.initialName) < ($1.createdAt, $1.initialName) }
         if found != entries { entries = found }
+    }
+
+    /// Whether a package's manifest exists but cannot be read yet: evicted by iCloud (in which case a
+    /// download is requested) or still being written.
+    private static func manifestIsArriving(in package: URL) -> Bool {
+        let fm = FileManager.default
+        let manifest = package.appendingPathComponent("manifest.json")
+        if fm.fileExists(atPath: manifest.path) { return true }
+        guard fm.fileExists(atPath: package.appendingPathComponent(".manifest.json.icloud").path) else { return false }
+        try? fm.startDownloadingUbiquitousItem(at: manifest)
+        return true
     }
 
     /// Creates an empty base package and returns its entry.

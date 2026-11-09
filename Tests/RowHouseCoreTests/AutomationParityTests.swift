@@ -179,6 +179,17 @@ struct AutomationParityTests {
         // Duplicates get their own secret.
         let copy = try #require(h.doc.duplicateAutomation(id))
         #expect(h.doc.automation(copy)?.trigger.webhookToken != token)
+
+        // A duplicate of the whole base holds the same automation, switched off: the original still answers.
+        h.doc.updateAutomation(id) { $0.enabled = true }
+        let duplicate = try await harness()
+        duplicate.doc.mergeRemote(h.doc.state)
+        duplicate.doc.updateAutomation(id) { $0.enabled = false }
+        let before = h.doc.recordCount(in: h.table)
+        #expect(await AutomationEngine.respond(to: request, engines: [duplicate.engine, h.engine]).status == 200)
+        await settle(h.engine)
+        #expect(h.doc.recordCount(in: h.table) == before + 1)
+        duplicate.session.close()
         h.session.close()
     }
 

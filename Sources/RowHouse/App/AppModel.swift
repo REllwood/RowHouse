@@ -3,7 +3,25 @@ import Observation
 import RowHouseCore
 import SwiftUI
 
-/// App-wide state: the library of bases, their open sessions and automation engines.
+/// Where one base in the library stands on this Mac.
+@MainActor
+enum BaseStatus {
+    /// Its files are being read from this folder.
+    case loading(URL)
+    /// Open. The engine runs its automations; a base being filled by an importer has none yet.
+    case open(BaseSession, engine: AutomationEngine?)
+    /// Could not be read. Tried again whenever the library changes.
+    case failed(URL, message: String)
+
+    var url: URL {
+        switch self {
+        case .loading(let url), .failed(let url, _): url
+        case .open(let session, _): session.storage.packageURL
+        }
+    }
+}
+
+/// App-wide state: the library of bases and where each one stands on this Mac.
 @MainActor
 @Observable
 final class AppModel {
@@ -11,10 +29,10 @@ final class AppModel {
 
     let identity = DeviceIdentity.current
     let library: Library
-    private(set) var sessions: [String: BaseSession] = [:]
-    private(set) var engines: [String: AutomationEngine] = [:]
-    private(set) var loading: Set<String> = []
-    private(set) var loadErrors: [String: String] = [:]
+    /// Every base this Mac is opening, has open or could not open, by base id. The one place a base's
+    /// lifecycle is recorded: a base can only be in one of these states, and a base that leaves the
+    /// library (trashed, moved, or a different storage location) leaves this too.
+    private(set) var bases: [String: BaseStatus] = [:]
 
     @ObservationIgnored private let services = SystemAutomationServices()
     @ObservationIgnored private var mentionObservers: [String: UUID] = [:]
@@ -24,13 +42,25 @@ final class AppModel {
         syncSessions()
     }
 
+    var sessions: [String: BaseSession] {
+        bases.compactMapValues { if case .open(let session, _) = $0 { session } else { nil } }
+    }
+
+    var engines: [String: AutomationEngine] {
+        bases.compactMapValues { if case .open(_, let engine) = $0 { engine } else { nil } }
+    }
+
+    var loading: Set<String> {
+        Set(bases.compactMap { if case .loading = $0.value { $0.key } else { nil } })
+    }
+
     var orderedSessions: [BaseSession] {
-        library.entries.compactMap { sessions[$0.baseID] }
+        library.entries.compactMap { session($0.baseID) }
     }
 
     func session(_ baseID: String?) -> BaseSession? {
-        guard let baseID else { return nil }
-        return sessions[baseID]
+        guard let baseID, case .open(let session, _)? = bases[baseID] else { return nil }
+        return session
     }
 
     /// The table to open first: the one with the most views (templates put their main table there).
@@ -40,8 +70,8 @@ final class AppModel {
     }
 
     func engine(_ baseID: String?) -> AutomationEngine? {
-        guard let baseID else { return nil }
-        return engines[baseID]
+        guard let baseID, case .open(_, let engine)? = bases[baseID] else { return nil }
+        return engine
     }
 
     /// Reports a failure over the window being worked in, after any sheet in front of it has closed.
@@ -49,40 +79,72 @@ final class AppModel {
         AppDialogPresenter.present(.failure(title, message: message), over: NSApp.mainWindow)
     }
 
-    /// Opens sessions for bases that appeared in the library and closes ones that disappeared.
+    /// Opens bases that appeared in the library (or failed before), closes ones that left it, and
+    /// reopens ones that moved, such as a base renamed in Finder.
     func syncSessions() {
-        let entries = library.entries
-        let live = Set(entries.map(\.baseID))
-        for (id, session) in sessions where !live.contains(id) {
-            engines[id]?.stop()
-            engines[id] = nil
-            session.close()
-            sessions[id] = nil
+        let entries = Dictionary(library.entries.map { ($0.baseID, $0) }, uniquingKeysWith: { first, _ in first })
+        for (id, status) in bases {
+            guard let entry = entries[id], entry.url.standardizedFileURL == status.url.standardizedFileURL else {
+                close(id)
+                continue
+            }
         }
-        for entry in entries where sessions[entry.baseID] == nil && !loading.contains(entry.baseID) {
-            open(entry)
+        for entry in library.entries {
+            switch bases[entry.baseID] {
+            case nil, .failed?: open(entry)
+            case .loading?, .open?: break
+            }
         }
     }
 
-    private func open(_ entry: LibraryEntry, then: ((BaseSession) -> Void)? = nil) {
-        loading.insert(entry.baseID)
+    private func open(_ entry: LibraryEntry) {
+        bases[entry.baseID] = .loading(entry.url)
         Task {
             do {
-                let session = try await BaseSession.open(entry: entry, identity: identity)
-                sessions[entry.baseID] = session
-                loadErrors[entry.baseID] = nil
-                then?(session)
-                startServices(for: session)
+                install(try await BaseSession.open(entry: entry, identity: identity), from: entry)
             } catch {
-                loadErrors[entry.baseID] = error.localizedDescription
+                guard isLoading(entry) else { return }
+                bases[entry.baseID] = .failed(entry.url, message: error.localizedDescription)
             }
-            loading.remove(entry.baseID)
         }
+    }
+
+    private func isLoading(_ entry: LibraryEntry) -> Bool {
+        if case .loading(let url)? = bases[entry.baseID] { return url == entry.url }
+        return false
+    }
+
+    /// Puts a session that has finished opening in place, unless its base was closed, trashed or moved
+    /// meanwhile, in which case the session is closed so it never runs automations or writes unseen.
+    @discardableResult
+    private func install(_ session: BaseSession, from entry: LibraryEntry, startingServices: Bool = true) -> Bool {
+        guard isLoading(entry) else {
+            session.close()
+            return false
+        }
+        bases[entry.baseID] = .open(session, engine: nil)
+        if startingServices { startServices(for: session) }
+        return true
+    }
+
+    /// Forgets a base that was being opened by hand, after that failed.
+    private func abandon(_ entry: LibraryEntry) {
+        if isLoading(entry) { bases[entry.baseID] = nil }
+    }
+
+    private func close(_ baseID: String) {
+        if case .open(let session, let engine)? = bases[baseID] {
+            engine?.stop()
+            if let observer = mentionObservers.removeValue(forKey: baseID) { session.document.removeObserver(observer) }
+            session.close()
+        }
+        bases[baseID] = nil
     }
 
     /// Starts a base's automations and watches for comments that @mention you from other Macs.
     private func startServices(for session: BaseSession) {
-        engines[session.id] = AutomationEngine(session: session, services: services)
+        guard case .open(let open, nil)? = bases[session.id], open === session else { return }
+        bases[session.id] = .open(session, engine: AutomationEngine(session: session, services: services))
         session.document.currentPersonID = Me.personID(in: session.id)
         if let old = mentionObservers[session.id] { session.document.removeObserver(old) }
         mentionObservers[session.id] = session.document.addObserver { [weak self, weak session] changes in
@@ -108,20 +170,18 @@ final class AppModel {
 
     /// Creates a base from a template and returns its id once it's open.
     func createBase(name: String, template: BaseTemplate) async -> String? {
-        var createdID: String?
-        defer { if let createdID { loading.remove(createdID) } }
+        var created: LibraryEntry?
         do {
             let entry = try library.createPackage(named: name)
-            createdID = entry.baseID
-            loading.insert(entry.baseID)
+            created = entry
+            bases[entry.baseID] = .loading(entry.url)
             let session = try await BaseSession.open(entry: entry, identity: identity)
             session.document.updateBaseInfo(name: name)
             session.document.apply(template: template, storage: session.storage)
             session.writeSnapshotNow()
-            sessions[entry.baseID] = session
-            startServices(for: session)
-            return entry.baseID
+            return install(session, from: entry) ? entry.baseID : nil
         } catch {
+            if let created { abandon(created) }
             showAlert(title: "Could not create the base", message: error.localizedDescription)
             return nil
         }
@@ -130,31 +190,36 @@ final class AppModel {
     /// Creates an empty base (no tables) and returns its open session, for importers to fill.
     func createEmptyBase(name: String, icon: String = "square.grid.3x3.fill", color: ChoiceColor = .blue) async throws -> BaseSession {
         let entry = try library.createPackage(named: name)
-        loading.insert(entry.baseID)
-        defer { loading.remove(entry.baseID) }
-        let session = try await BaseSession.open(entry: entry, identity: identity)
+        bases[entry.baseID] = .loading(entry.url)
+        let session: BaseSession
+        do {
+            session = try await BaseSession.open(entry: entry, identity: identity)
+        } catch {
+            abandon(entry)
+            throw error
+        }
         let manager = session.document.undoManager
         session.document.undoManager = nil
         session.document.updateBaseInfo(name: name, icon: icon, color: color)
         session.document.undoManager = manager
-        sessions[entry.baseID] = session
+        // Its automations start once the importer has filled it.
+        guard install(session, from: entry, startingServices: false) else { throw CancellationError() }
         return session
     }
 
     /// Starts automations for a base created by an importer, once it has been filled.
     func finishImport(_ session: BaseSession) {
         session.writeSnapshotNow()
-        if engines[session.id] == nil { startServices(for: session) }
+        startServices(for: session)
     }
 
     /// Creates a base holding one table imported from CSV.
     func createBase(fromCSV rows: [[String]], hasHeader: Bool, plan: [CSVColumnPlan], name: String) async -> String? {
-        var createdID: String?
-        defer { if let createdID { loading.remove(createdID) } }
+        var created: LibraryEntry?
         do {
             let entry = try library.createPackage(named: name)
-            createdID = entry.baseID
-            loading.insert(entry.baseID)
+            created = entry
+            bases[entry.baseID] = .loading(entry.url)
             let session = try await BaseSession.open(entry: entry, identity: identity)
             let doc = session.document
             let manager = doc.undoManager
@@ -163,10 +228,9 @@ final class AppModel {
             doc.importCSV(rows: rows, hasHeader: hasHeader, plan: plan, tableName: name)
             doc.undoManager = manager
             session.writeSnapshotNow()
-            sessions[entry.baseID] = session
-            startServices(for: session)
-            return entry.baseID
+            return install(session, from: entry) ? entry.baseID : nil
         } catch {
+            if let created { abandon(created) }
             showAlert(title: "Could not import the CSV", message: error.localizedDescription)
             return nil
         }
@@ -174,10 +238,7 @@ final class AppModel {
 
     func trashBase(_ baseID: String) {
         guard let entry = library.entries.first(where: { $0.baseID == baseID }) else { return }
-        engines[baseID]?.stop()
-        engines[baseID] = nil
-        sessions[baseID]?.close()
-        sessions[baseID] = nil
+        close(baseID)
         do {
             try library.trash(entry)
         } catch {
@@ -188,13 +249,14 @@ final class AppModel {
 
     /// Copies a base (with attachments) as a new base.
     func duplicateBase(_ baseID: String) async -> String? {
-        guard let source = sessions[baseID], let entry = library.entries.first(where: { $0.baseID == baseID }) else { return nil }
+        guard let source = session(baseID), let entry = library.entries.first(where: { $0.baseID == baseID }) else { return nil }
         source.storage.flush()
+        var created: LibraryEntry?
         do {
             let name = source.document.info.name + " copy"
             let copy = try library.duplicate(entry, state: source.document.state, name: name, deviceID: identity.id)
-            loading.insert(copy.baseID)
-            defer { loading.remove(copy.baseID) }
+            created = copy
+            bases[copy.baseID] = .loading(copy.url)
             let session = try await BaseSession.open(entry: copy, identity: identity)
             let manager = session.document.undoManager
             session.document.undoManager = nil
@@ -204,17 +266,16 @@ final class AppModel {
                 session.document.updateAutomation(automation.id) { $0.enabled = false }
             }
             session.document.undoManager = manager
-            sessions[copy.baseID] = session
-            engines[copy.baseID] = AutomationEngine(session: session, services: services)
-            return copy.baseID
+            return install(session, from: copy) ? copy.baseID : nil
         } catch {
+            if let created { abandon(created) }
             showAlert(title: "Could not duplicate the base", message: error.localizedDescription)
             return nil
         }
     }
 
     func exportBackup(_ baseID: String) {
-        guard let session = sessions[baseID], let entry = library.entries.first(where: { $0.baseID == baseID }) else { return }
+        guard let session = session(baseID), let entry = library.entries.first(where: { $0.baseID == baseID }) else { return }
         session.writeSnapshotNow()
         session.storage.flush()
         let panel = NSSavePanel()
@@ -233,15 +294,15 @@ final class AppModel {
         panel.allowedContentTypes = [.zip]
         panel.message = "Choose a RowHouse backup (.zip)"
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        var restored: LibraryEntry?
         do {
             let entry = try library.importBackup(from: url)
-            loading.insert(entry.baseID)
-            defer { loading.remove(entry.baseID) }
+            restored = entry
+            bases[entry.baseID] = .loading(entry.url)
             let session = try await BaseSession.open(entry: entry, identity: identity)
-            sessions[entry.baseID] = session
-            startServices(for: session)
-            return entry.baseID
+            return install(session, from: entry) ? entry.baseID : nil
         } catch {
+            if let restored { abandon(restored) }
             showAlert(title: "Could not restore the backup", message: error.localizedDescription)
             return nil
         }
@@ -253,19 +314,14 @@ final class AppModel {
     }
 
     func setStorageLocation(_ location: StorageLocation) {
-        for id in Array(sessions.keys) {
-            engines[id]?.stop()
-            sessions[id]?.close()
-        }
-        engines.removeAll()
-        sessions.removeAll()
+        // Every status belongs to the old folder, including bases still opening there.
+        for id in Array(bases.keys) { close(id) }
         library.setLocation(location)
         syncSessions()
     }
 
     func closeAll() {
-        for engine in engines.values { engine.stop() }
-        for session in sessions.values { session.close() }
+        for id in Array(bases.keys) { close(id) }
     }
 
     func pollAll() {

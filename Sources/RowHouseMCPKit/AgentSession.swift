@@ -59,7 +59,13 @@ final class AgentSession {
         storage.flush()
         if opsSinceSnapshot >= Self.snapshotEveryOps { writeSnapshot() }
         if let error = storage.takeWriteError() {
-            throw ToolError("The change was made but couldn't be saved to \(entry.url.path): \(error.localizedDescription)")
+            if error is BaseStorage.WriteError {
+                throw ToolError("The base was moved or deleted while this call ran, so its change was not saved. Call list_bases to see where the bases are now.", code: .notFound)
+            }
+            throw ToolError(
+                "The change was made, but it could not be written to \(entry.url.path) yet: \(error.localizedDescription) It stays in the base and is saved with the next snapshot, within a few minutes or when this server stops. Do not repeat the call, or the change would be made twice.",
+                code: .notSaved
+            )
         }
     }
 

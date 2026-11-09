@@ -17,6 +17,8 @@ struct AirtableImportSheet: View {
     @State private var importing = false
     @State private var status = ""
     @State private var fraction = 0.0
+    /// When the importer last reported progress, so a long pause can be explained.
+    @State private var progressAt = Date()
     @State private var errorMessage: String?
     @State private var finished: (name: String, report: ImportReport)?
     @State private var work: Task<Void, Never>?
@@ -153,6 +155,16 @@ struct AirtableImportSheet: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                // Airtable limits how fast its API can be read, and can ask RowHouse to wait up to a
+                // minute at a time, several times. Without this the sheet looks stuck.
+                if importing, context.date.timeIntervalSince(progressAt) > 15 {
+                    Text("Still importing. Airtable sometimes asks RowHouse to wait up to a minute before reading more.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -233,6 +245,7 @@ struct AirtableImportSheet: View {
         importing = true
         status = "Creating the base…"
         fraction = 0
+        progressAt = Date()
         work = Task {
             var created: BaseSession?
             do {
@@ -241,6 +254,7 @@ struct AirtableImportSheet: View {
                 let report = try await importer.importBase(id: base.id, name: base.name, into: session.document, storage: session.storage) { text, value in
                     status = text
                     fraction = value
+                    progressAt = Date()
                 }
                 app.finishImport(session)
                 if let first = session.document.tables.first {

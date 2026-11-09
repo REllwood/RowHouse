@@ -21,7 +21,8 @@ extension FocusedValues {
     }
 }
 
-/// Actions the menu bar can trigger on the table currently on screen.
+/// Actions the menu bar can trigger on the table currently on screen. The table screen sets the
+/// table-wide ones (export, print, search); the view on screen owns the record commands.
 @MainActor
 final class GridCommandTarget {
     var addRecord: () -> Void = {}
@@ -33,6 +34,37 @@ final class GridCommandTarget {
     var focusSearch: () -> Void = {}
     var addField: () -> Void = {}
     var fillDown: () -> Void = {}
+
+    /// The view whose record commands these are.
+    private(set) var recordCommandsOwner: String?
+
+    /// Hands the record commands to a view, starting from none, so a view never runs commands another
+    /// view left behind. A view with no record commands (form, chart, dashboard) claims them to turn
+    /// them off.
+    func claimRecordCommands(for viewID: String) {
+        recordCommandsOwner = viewID
+        addRecord = {}
+        addRecordFromTemplate = { _ in }
+        expandSelection = {}
+        deleteSelection = {}
+        addField = {}
+        fillDown = {}
+    }
+}
+
+extension View {
+    /// Gives this view the menu's record commands while it is on screen. They are set up again whenever
+    /// the view's configuration changes, so they never act on an old one (a calendar's old date field).
+    func recordCommands(_ target: GridCommandTarget, for view: ViewModel, install: @escaping (GridCommandTarget) -> Void = { _ in }) -> some View {
+        onAppear {
+            target.claimRecordCommands(for: view.id)
+            install(target)
+        }
+        .onChange(of: view) { _, current in
+            target.claimRecordCommands(for: current.id)
+            install(target)
+        }
+    }
 }
 
 struct AppCommands: Commands {

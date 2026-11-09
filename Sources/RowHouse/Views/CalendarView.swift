@@ -26,10 +26,8 @@ struct CalendarView: View {
                 ContentUnavailableView("Choose a date field", systemImage: "calendar", description: Text("Use the Date field menu above to pick which date to show records on."))
             }
         }
-        .onAppear {
-            commandTarget.addRecord = { addRecord(on: calendar.startOfDay(for: Date())) }
-            commandTarget.expandSelection = {}
-            commandTarget.deleteSelection = {}
+        .recordCommands(commandTarget, for: view) { target in
+            target.addRecord = { addRecord(on: calendar.startOfDay(for: Date())) }
         }
     }
 

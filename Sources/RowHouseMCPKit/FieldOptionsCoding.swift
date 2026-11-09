@@ -206,7 +206,7 @@ enum FieldOptionsCoding {
             case "automation":
                 if let name = try optionalString(value, key: key, field: label) {
                     guard let automation = document.automations.first(where: { $0.id == name || $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
-                        throw ToolError("No automation named \(name) for \(label). Automations: \(document.automations.map(\.name).joined(separator: ", "))")
+                        throw ToolError("No automation named \(name) for \(label). Automations: \(document.automations.map(\.name).joined(separator: ", "))", code: .notFound)
                     }
                     o.buttonAutomationID = automation.id
                     if options["action"] == nil { o.buttonAction = .runAutomation }
@@ -220,7 +220,7 @@ enum FieldOptionsCoding {
                 } else if let table = document.table(name) ?? document.table(named: name) {
                     o.linkedTableID = table.id
                 } else {
-                    throw ToolError("No table named \(name) to link \(label) to. Tables: \(document.tables.map(\.name).joined(separator: ", "))")
+                    throw ToolError("No table named \(name) to link \(label) to. Tables: \(document.tables.map(\.name).joined(separator: ", "))", code: .notFound)
                 }
             case "link_field":
                 guard let tableID = target.tableID, let name = try optionalString(value, key: key, field: label) else { break }
@@ -236,7 +236,7 @@ enum FieldOptionsCoding {
                 }
                 var ids: [String] = []
                 for name in names {
-                    guard let f = field(name, in: tableID, document: document) else { throw ToolError("\(label): no field named \(name) in \(target.tableName)") }
+                    guard let f = field(name, in: tableID, document: document) else { throw ToolError("\(label): no field named \(name) in \(target.tableName)", code: .notFound) }
                     ids.append(f.id)
                 }
                 o.watchedFieldIDs = ids.isEmpty ? nil : ids
@@ -260,7 +260,7 @@ enum FieldOptionsCoding {
             }
             guard let targetField = field(key, in: linkedTable, document: document) else {
                 let names = document.fields(in: linkedTable).map(\.name).joined(separator: ", ")
-                throw ToolError("\(label): no field named \(key) in \(document.table(linkedTable)?.name ?? "the linked table"). Fields: \(names)")
+                throw ToolError("\(label): no field named \(key) in \(document.table(linkedTable)?.name ?? "the linked table"). Fields: \(names)", code: .notFound)
             }
             o.targetFieldID = targetField.id
         }

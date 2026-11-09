@@ -202,10 +202,13 @@ struct ViewContent: View {
             GanttView(session: session, view: view, state: state, commandTarget: commandTarget)
         case .form:
             FormView(session: session, view: view, state: state)
+                .recordCommands(commandTarget, for: view)
         case .chart:
             ChartView(session: session, view: view, state: state)
+                .recordCommands(commandTarget, for: view)
         case .dashboard:
             DashboardView(session: session, view: view, state: state)
+                .recordCommands(commandTarget, for: view)
         }
     }
 }

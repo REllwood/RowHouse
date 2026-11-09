@@ -30,6 +30,30 @@ public final class BaseStorage: @unchecked Sendable {
         public var isEmpty: Bool { snapshots.isEmpty && ops.isEmpty && runs.isEmpty }
     }
 
+    /// Why a write did not happen.
+    public enum WriteError: LocalizedError {
+        /// The base's folder has gone, usually moved to the Trash or renamed in Finder. Writing would
+        /// recreate it as an empty folder that the library cannot open, so nothing is written.
+        case packageMissing(URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case .packageMissing(let url):
+                "The base is no longer at \(url.path). It may have been moved to the Trash or renamed."
+            }
+        }
+    }
+
+    /// Where one of this device's log segments stands in this process.
+    enum OwnSegment {
+        /// Covered by the snapshot read at load, so its operations are in memory without reading it.
+        case coveredAtLoad
+        /// Read into memory, at load or later.
+        case read
+        /// Created by this process, which knows everything appended to it.
+        case writing
+    }
+
     public static let packageExtension = "rowhouse"
     static let formatVersion = 1
     static let segmentLimit = 5_000
@@ -54,7 +78,14 @@ public final class BaseStorage: @unchecked Sendable {
     /// Set when this device's snapshot exists but couldn't be read. Until it's recovered we never
     /// write a snapshot or compact, because the file may hold history the logs no longer have.
     private var ownSnapshotUnreadable = false
-    private var lastWriteError: Error?
+    /// This device's segments whose operations are in memory. A snapshot only claims these, so a
+    /// segment iCloud delivers after load (one that was evicted, say) is never marked as covered before
+    /// its operations have been read.
+    private var ownSegments: [String: OwnSegment] = [:]
+    /// The latest failure to append operations, which means they are not on disk yet.
+    private var lastAppendError: Error?
+    /// The latest failure to write a snapshot. The logs still hold every operation, so nothing is lost.
+    private var lastSnapshotError: Error?
     /// Log segments seen per remote device, so a remote snapshot is only merged when that device
     /// has compacted segments away (otherwise its logs already delivered every change).
     private var seenSegments: [String: Set<String>] = [:]
@@ -122,12 +153,14 @@ public final class BaseStorage: @unchecked Sendable {
         for dir in deviceDirs where (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
             let device = dir.lastPathComponent
             let isOwn = device == deviceID
-            if isOwn && !includeOwnLogs && !ownSnapshotUnreadable { continue }
+            // A poll reads this device's folder only for segments that arrived after load, plus its
+            // snapshot while that is unreadable.
+            let pollingOwn = isOwn && !includeOwnLogs
             let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [])) ?? []
             var covered: Set<String> = []
             let segmentNames = Set(files.map(\.lastPathComponent).filter { $0.hasPrefix("log-") && $0.hasSuffix(".jsonl") })
 
-            if let snapshotURL = files.first(where: { $0.lastPathComponent == "snapshot.json" }) {
+            if let snapshotURL = files.first(where: { $0.lastPathComponent == "snapshot.json" }), !pollingOwn || ownSnapshotUnreadable {
                 let key = device + "/snapshot.json"
                 let mtime = (try? snapshotURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
                 // After the first load a remote snapshot only adds something if that device deleted
@@ -151,7 +184,13 @@ public final class BaseStorage: @unchecked Sendable {
                     }
                 }
             }
-            if isOwn && !includeOwnLogs { continue }
+            if pollingOwn {
+                for name in segmentNames.sorted() where ownSegments[name] == nil {
+                    changes.ops += readOperations(dir.appendingPathComponent(name), key: device + "/" + name)
+                    ownSegments[name] = .read
+                }
+                continue
+            }
             if !isOwn { seenSegments[device, default: []].formUnion(segmentNames) }
 
             for file in files {
@@ -167,13 +206,11 @@ public final class BaseStorage: @unchecked Sendable {
                     if covered.contains(name) {
                         // Already folded into this device's snapshot: skip its contents but remember its size.
                         logOffsets[key] = (try? fm.attributesOfItem(atPath: file.path)[.size] as? UInt64) ?? 0
+                        if isOwn { ownSegments[name] = .coveredAtLoad }
                         continue
                     }
-                    for line in readNewLines(file, key: key) {
-                        if let json = try? JSONValue.parse(line), let op = ChangeOperation(json: json) {
-                            changes.ops.append(op)
-                        }
-                    }
+                    changes.ops += readOperations(file, key: key)
+                    if isOwn { ownSegments[name] = .read }
                 } else if name == "runs.jsonl" {
                     let decoder = JSONDecoder()
                     decoder.dateDecodingStrategy = .iso8601
@@ -184,6 +221,12 @@ public final class BaseStorage: @unchecked Sendable {
             }
         }
         return changes
+    }
+
+    private func readOperations(_ url: URL, key: String) -> [ChangeOperation] {
+        readNewLines(url, key: key).compactMap { line in
+            (try? JSONValue.parse(line)).flatMap(ChangeOperation.init(json:))
+        }
     }
 
     /// Returns complete lines appended since the last read of `url`.
@@ -249,16 +292,18 @@ public final class BaseStorage: @unchecked Sendable {
         let data = payload
         queue.async { [self] in
             do {
-                try fm.createDirectory(at: ownURL, withIntermediateDirectories: true)
+                try createOwnFolder()
                 if segmentURL == nil || segmentOps >= Self.segmentLimit {
-                    segmentURL = ownURL.appendingPathComponent(Self.newSegmentName())
+                    let name = Self.newSegmentName()
+                    segmentURL = ownURL.appendingPathComponent(name)
                     segmentOps = 0
+                    ownSegments[name] = .writing
                 }
                 try Self.coordinatedAppend(data, to: segmentURL!)
                 segmentOps += count
                 logOffsets[deviceID + "/" + segmentURL!.lastPathComponent, default: 0] += UInt64(data.count)
             } catch {
-                lastWriteError = error
+                lastAppendError = error
                 NSLog("RowHouse: failed to append to log: \(error)")
             }
         }
@@ -272,7 +317,7 @@ public final class BaseStorage: @unchecked Sendable {
         let line = encoded
         queue.async { [self] in
             do {
-                try fm.createDirectory(at: ownURL, withIntermediateDirectories: true)
+                try createOwnFolder()
                 let url = ownURL.appendingPathComponent("runs.jsonl")
                 try trimRunsIfNeeded(url)
                 try Self.coordinatedAppend(line, to: url)
@@ -302,11 +347,13 @@ public final class BaseStorage: @unchecked Sendable {
         queue.async { [self] in
             guard !ownSnapshotUnreadable else { return }
             do {
-                try fm.createDirectory(at: ownURL, withIntermediateDirectories: true)
+                try createOwnFolder()
                 segmentURL = nil
                 segmentOps = 0
                 let files = (try? fm.contentsOfDirectory(atPath: ownURL.path)) ?? []
-                var segments = files.filter { $0.hasPrefix("log-") && $0.hasSuffix(".jsonl") }.sorted()
+                // Only segments whose operations are in `state`: one that arrived since the last poll
+                // stays uncovered, so the next load still reads it.
+                var segments = files.filter { $0.hasPrefix("log-") && $0.hasSuffix(".jsonl") && ownSegments[$0] != nil }.sorted()
 
                 // Delete segments that were already covered by a snapshot written long enough ago that
                 // every device has had time to receive it.
@@ -327,13 +374,14 @@ public final class BaseStorage: @unchecked Sendable {
                     "state": state.json,
                 ])
                 try Self.coordinatedWrite(root.serialized(), to: ownURL.appendingPathComponent("snapshot.json"))
+                lastSnapshotError = nil
                 // Only advance the compaction clock when the covered set actually changes.
                 if segments != ownSnapshotSegments || ownSnapshotWritten == nil {
                     ownSnapshotSegments = segments
                     ownSnapshotWritten = now
                 }
             } catch {
-                lastWriteError = error
+                lastSnapshotError = error
                 NSLog("RowHouse: failed to write snapshot: \(error)")
             }
         }
@@ -344,12 +392,26 @@ public final class BaseStorage: @unchecked Sendable {
         queue.sync {}
     }
 
-    /// The latest failure to append to this device's log or write its snapshot, cleared once read.
+    /// The latest failure to append operations to this device's log, cleared once read. Such
+    /// operations are in memory but not on disk. A failed snapshot is not reported here: the logs still
+    /// hold everything it would have saved.
     public func takeWriteError() -> Error? {
         queue.sync {
-            defer { lastWriteError = nil }
-            return lastWriteError
+            defer { lastAppendError = nil }
+            return lastAppendError
         }
+    }
+
+    /// The latest failure to write this device's snapshot, if the last attempt failed.
+    public var snapshotError: Error? {
+        queue.sync { lastSnapshotError }
+    }
+
+    /// Creates this device's folder inside the package, but never the package itself, so a base
+    /// moved to the Trash or renamed elsewhere does not reappear as an empty folder.
+    private func createOwnFolder() throws {
+        guard fm.fileExists(atPath: packageURL.path) else { throw WriteError.packageMissing(packageURL) }
+        try fm.createDirectory(at: ownURL, withIntermediateDirectories: true)
     }
 
     private static func newSegmentName() -> String {
@@ -381,6 +443,7 @@ public final class BaseStorage: @unchecked Sendable {
             info.width = props[kCGImagePropertyPixelWidth] as? Int
             info.height = props[kCGImagePropertyPixelHeight] as? Int
         }
+        guard fm.fileExists(atPath: packageURL.path) else { throw WriteError.packageMissing(packageURL) }
         try fm.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
         let dest = url(for: info)
         if !fm.fileExists(atPath: dest.path) {

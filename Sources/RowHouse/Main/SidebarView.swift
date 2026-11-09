@@ -19,17 +19,18 @@ struct SidebarView: View {
                         .contextMenu { baseMenu(session) }
                 }
             }
-            ForEach(app.library.entries.filter { app.loading.contains($0.baseID) && app.session($0.baseID) == nil }) { entry in
-                Label {
-                    Text(entry.initialName).foregroundStyle(.secondary)
-                } icon: {
-                    ProgressView().controlSize(.small)
+            ForEach(app.library.entries.filter { app.session($0.baseID) == nil }) { entry in
+                if case .failed(_, let message)? = app.bases[entry.baseID] {
+                    Label("Could not open \(entry.initialName)", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .help(message)
+                } else {
+                    Label {
+                        Text(entry.initialName).foregroundStyle(.secondary)
+                    } icon: {
+                        ProgressView().controlSize(.small)
+                    }
                 }
-            }
-            ForEach(Array(app.loadErrors.keys), id: \.self) { id in
-                Label("Couldn't open a base", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .help(app.loadErrors[id] ?? "")
             }
         }
         .listStyle(.sidebar)

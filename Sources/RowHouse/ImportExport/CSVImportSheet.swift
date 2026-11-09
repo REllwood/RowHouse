@@ -79,7 +79,7 @@ struct CSVImportSheet: View {
                 }
             }
             Toggle("First row contains field names", isOn: $hasHeader)
-                .onChange(of: hasHeader) { _, _ in plan = CSVImporter.plan(rows: rows, hasHeader: hasHeader) }
+                .onChange(of: hasHeader) { _, _ in replan() }
             Picker("Import into", selection: $destination) {
                 Text("A new base").tag(Destination.newBase)
                 if let session = currentSession {
@@ -168,6 +168,18 @@ struct CSVImportSheet: View {
         plan = CSVImporter.plan(rows: parsed, hasHeader: hasHeader)
         name = newName
         autoMatch(destination)
+    }
+
+    /// Rebuilds the plan after the header setting changes. Names and types come from a different row
+    /// now, but which columns to include and which fields they fill stay as chosen.
+    private func replan() {
+        let previous = plan
+        plan = CSVImporter.plan(rows: rows, hasHeader: hasHeader)
+        autoMatch(destination)
+        for i in plan.indices where i < previous.count {
+            plan[i].include = previous[i].include
+            if let target = previous[i].targetFieldID { plan[i].targetFieldID = target }
+        }
     }
 
     private func autoMatch(_ dest: Destination) {

@@ -152,6 +152,9 @@ struct FormView: View {
         let values = draft.filter { !$0.value.isNull && shownIDs.contains($0.key) }
         let id = document.createRecord(in: view.tableID, values: values)
         app.engine(session.id)?.formSubmitted(viewID: view.id, recordID: id)
+        // The answers are in the record now. Clearing them here means a prefill link that arrives
+        // next starts a fresh form instead of reopening these answers.
+        draft = [:]
         submitted = true
     }
 }

@@ -88,9 +88,12 @@ struct AttachmentThumbnail: View {
         .clipped()
         .task(id: url) {
             image = ThumbnailCache.shared.cached(url, size: size)
-            if image == nil {
-                ThumbnailCache.shared.load(url, size: size) { image = $0 }
+            guard image == nil else { return }
+            let loaded = await withCheckedContinuation { continuation in
+                ThumbnailCache.shared.load(url, size: size) { continuation.resume(returning: $0) }
             }
+            // A newer file replaced this one while it loaded: its own task shows that one instead.
+            if !Task.isCancelled { image = loaded }
         }
     }
 }

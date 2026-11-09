@@ -124,7 +124,7 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     func update(session: BaseSession, view: ViewModel, fields: [FieldModel], result: ViewResult, revision: Int) {
         self.session = session
-        let previousCursorKey = cursorKey()
+        let previousSelection = selectionKey()
         self.view = view
         let newHeight = CGFloat(view.config.rowHeight?.points ?? RowHeight.short.points)
         let signature = columnsSignature(fields: fields, view: view)
@@ -150,11 +150,11 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         if editor != nil {
             // Keep the cursor pointing at the same record and field while rows move underneath.
             pendingReload = true
-            remapCursor(previousCursorKey)
+            restoreSelection(previousSelection)
         } else if rowsChanged || revisionChanged || heightChanged {
             tableView.reloadData()
             if heightChanged { tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows)) }
-            restoreCursor(previousCursorKey)
+            restoreSelection(previousSelection)
         }
         updateSummaries()
     }
@@ -567,36 +567,50 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     var hasSelection: Bool { cursor != nil || !selectedRows.isEmpty }
 
-    private func cursorKey() -> (String, String)? {
-        guard let c = cursor, c.row < rows.count, let rid = rows[c.row].recordID, c.column < fields.count else { return nil }
-        return (rid, fields[c.column].id)
+    /// The selection by record and field, so it survives rows moving, arriving or leaving underneath,
+    /// such as edits synced from another Mac or made by an AI assistant.
+    private struct SelectionKey {
+        var cursor: (recordID: String, fieldID: String)?
+        var anchor: (recordID: String, fieldID: String)?
+        var rows: Set<String> = []
     }
 
-    private func remapCursor(_ key: (String, String)?) {
-        guard let key, let row = rows.firstIndex(where: { $0.recordID == key.0 }), let col = fields.firstIndex(where: { $0.id == key.1 }) else {
-            cursor = nil
-            anchor = nil
-            return
+    private func key(for position: GridPosition?) -> (recordID: String, fieldID: String)? {
+        guard let p = position, p.row >= 0, p.row < rows.count, let rid = rows[p.row].recordID, p.column >= 0, p.column < fields.count else { return nil }
+        return (rid, fields[p.column].id)
+    }
+
+    private func position(for key: (recordID: String, fieldID: String)?) -> GridPosition? {
+        guard let key, let row = rows.firstIndex(where: { $0.recordID == key.recordID }), let col = fields.firstIndex(where: { $0.id == key.fieldID }) else { return nil }
+        return GridPosition(row: row, column: col)
+    }
+
+    private func selectionKey() -> SelectionKey {
+        SelectionKey(
+            cursor: key(for: cursor),
+            anchor: key(for: anchor),
+            rows: Set(selectedRows.compactMap { $0 < rows.count ? rows[$0].recordID : nil })
+        )
+    }
+
+    /// Puts the selection back where its records now are. A cursor whose record has gone is cleared;
+    /// a range whose far corner has gone shrinks to the cursor.
+    private func restoreSelection(_ key: SelectionKey) {
+        selectedRows = IndexSet(rows.indices.filter { rows[$0].recordID.map(key.rows.contains) ?? false })
+        if key.cursor == nil, let c = cursor, c.row < rows.count, c.column < fields.count, !isGroupRow(c.row) {
+            // On a row without a record, such as Add record: it stays where it is.
+            anchor = c
+        } else {
+            cursor = position(for: key.cursor)
+            anchor = cursor.flatMap { _ in position(for: key.anchor) } ?? cursor
         }
-        cursor = GridPosition(row: row, column: col)
-        anchor = cursor
+        refreshSelection()
     }
 
     /// The cursor, if it still points at a record row and a visible field.
     private var validCursor: GridPosition? {
         guard let c = cursor, c.row >= 0, c.row < rows.count, rows[c.row].recordID != nil, c.column >= 0, c.column < fields.count else { return nil }
         return c
-    }
-
-    private func restoreCursor(_ key: (String, String)?) {
-        selectedRows = IndexSet()
-        guard let key, let row = rows.firstIndex(where: { $0.recordID == key.0 }), let col = fields.firstIndex(where: { $0.id == key.1 }) else {
-            if let c = cursor, c.row >= rows.count || c.column >= fields.count || isGroupRow(c.row) { cursor = nil; anchor = nil }
-            return
-        }
-        cursor = GridPosition(row: row, column: col)
-        anchor = cursor
-        refreshSelection()
     }
 
     private var range: (rows: ClosedRange<Int>, cols: ClosedRange<Int>)? {
@@ -1225,9 +1239,9 @@ final class GridController: NSObject, NSTableViewDataSource, NSTableViewDelegate
         tableView.window?.makeFirstResponder(tableView)
         if pendingReload {
             pendingReload = false
-            let key = cursorKey()
+            let key = selectionKey()
             tableView.reloadData()
-            restoreCursor(key)
+            restoreSelection(key)
         }
         if let delta { move(dx: delta.0, dy: delta.1, extend: false, jump: false, wrap: delta.0 != 0) }
         refreshSelection()
