@@ -121,25 +121,43 @@ enum AppDialogPresenter {
     }
 }
 
-/// One dialog on screen: a borderless panel over its window, so keyboard focus stays inside the dialog
-/// until it closes.
+/// One dialog: a borderless panel over its window, so keyboard focus stays inside the dialog until it
+/// closes.
 @MainActor
 final class AppDialogController {
+    private enum Phase {
+        /// Waiting for an earlier dialog over the same window to close.
+        case queued
+        /// Waiting for a sheet in front of the window to close, such as a sheet whose action failed.
+        case waitingForSheet
+        case visible(AppDialogPanel)
+        /// Answered, cancelled, or cancelled because its window went away. Nothing happens after this.
+        case finished
+    }
+
     let dialog: AppDialog
     private(set) weak var parent: NSWindow?
+    /// Whether the dialog belongs to a window. If that window has gone by the time it would show, the
+    /// dialog is cancelled instead of appearing on its own.
+    private let belongsToWindow: Bool
     fileprivate let key: ObjectIdentifier
     private var completion: ((AppDialogResult) -> Void)?
     private let model: AppDialogModel
-    private var panel: AppDialogPanel?
+    private var phase = Phase.queued
     private var observers: [NSObjectProtocol] = []
-    private var isFinished = false
 
     fileprivate init(dialog: AppDialog, parent: NSWindow?, completion: @escaping (AppDialogResult) -> Void) {
         self.dialog = dialog
         self.parent = parent
+        belongsToWindow = parent != nil
         self.completion = completion
         key = parent.map(ObjectIdentifier.init) ?? ObjectIdentifier(AppDialogPanel.self)
         model = AppDialogModel(text: dialog.field?.text ?? "")
+    }
+
+    private var panel: AppDialogPanel? {
+        if case .visible(let panel) = phase { return panel }
+        return nil
     }
 
     /// Closes the dialog as if it had been cancelled.
@@ -148,16 +166,29 @@ final class AppDialogController {
     }
 
     fileprivate func show() {
-        if let parent, parent.attachedSheet != nil {
-            // Wait for the sheet in front of the window to close, such as a sheet whose action failed.
-            observe(NSWindow.didEndSheetNotification, of: parent) { [weak self] in
-                guard let self, !self.isFinished else { return }
-                self.removeObservers()
-                self.show()
-            }
+        switch phase {
+        case .queued, .waitingForSheet: break
+        case .visible, .finished: return
+        }
+        removeObservers()
+        if belongsToWindow && parent?.isVisible != true {
+            finish(.cancelled)
             return
         }
+        if let parent {
+            // In every phase from here on, the window closing or hiding cancels the dialog.
+            observe(NSWindow.willCloseNotification, of: parent) { [weak self] in self?.finish(.cancelled) }
+            observe(NSWindow.didChangeOcclusionStateNotification, of: parent) { [weak self] in
+                if self?.parent?.isVisible == false { self?.finish(.cancelled) }
+            }
+            if parent.attachedSheet != nil {
+                phase = .waitingForSheet
+                observe(NSWindow.didEndSheetNotification, of: parent) { [weak self] in self?.show() }
+                return
+            }
+        }
         let panel = makePanel()
+        phase = .visible(panel)
         if let parent {
             panel.setFrame(parent.frame, display: false)
             parent.addChildWindow(panel, ordered: .above)
@@ -167,10 +198,6 @@ final class AppDialogController {
             }
             // Clicking back into the window, or switching to it, puts the keyboard back in the dialog.
             observe(NSWindow.didBecomeKeyNotification, of: parent) { [weak self] in self?.panel?.makeKey() }
-            observe(NSWindow.willCloseNotification, of: parent) { [weak self] in self?.finish(.cancelled) }
-            observe(NSWindow.didChangeOcclusionStateNotification, of: parent) { [weak self] in
-                if self?.parent?.isVisible == false { self?.finish(.cancelled) }
-            }
         } else {
             placeOnScreen(panel)
             NSApp.activate()
@@ -183,6 +210,7 @@ final class AppDialogController {
 
     fileprivate func runModal() {
         let panel = makePanel()
+        phase = .visible(panel)
         placeOnScreen(panel)
         NSApp.activate()
         model.isVisible = true
@@ -195,8 +223,9 @@ final class AppDialogController {
     }
 
     fileprivate func finish(_ result: AppDialogResult) {
-        guard !isFinished else { return }
-        isFinished = true
+        if case .finished = phase { return }
+        let panel = self.panel
+        phase = .finished
         removeObservers()
         if let panel {
             model.isVisible = false
@@ -233,7 +262,6 @@ final class AppDialogController {
         panel.setAccessibilitySubrole(.dialog)
         panel.setAccessibilityTitle(dialog.title)
         panel.setAccessibilityModal(true)
-        self.panel = panel
         return panel
     }
 
@@ -490,45 +518,42 @@ struct AppDialogButtonStyle: ButtonStyle {
 
 extension View {
     /// Shows a dialog over this view's window while `item` is set, and clears `item` when it closes.
+    /// Confirming acts on the item the dialog was opened for, even if `item` changed meanwhile.
     func appDialog<Item>(item: Binding<Item?>, _ dialog: @escaping (Item) -> AppDialog, onConfirm: @escaping (Item, String) -> Void) -> some View {
-        modifier(AppDialogModifier(
-            isActive: item.wrappedValue != nil,
-            makeDialog: { item.wrappedValue.map(dialog) },
-            onResult: { result in
-                let current = item.wrappedValue
+        modifier(AppDialogModifier(isActive: item.wrappedValue != nil) {
+            guard let presented = item.wrappedValue else { return nil }
+            return (dialog(presented), { result in
                 item.wrappedValue = nil
-                if case .confirmed(let text) = result, let current { onConfirm(current, text) }
-            }
-        ))
+                if case .confirmed(let text) = result { onConfirm(presented, text) }
+            })
+        })
     }
 
     /// Shows a dialog over this view's window while `isPresented` is true, and sets it back to false when it closes.
     func appDialog(isPresented: Binding<Bool>, _ dialog: @escaping () -> AppDialog, onConfirm: @escaping (String) -> Void) -> some View {
-        modifier(AppDialogModifier(
-            isActive: isPresented.wrappedValue,
-            makeDialog: dialog,
-            onResult: { result in
+        modifier(AppDialogModifier(isActive: isPresented.wrappedValue) {
+            (dialog(), { result in
                 isPresented.wrappedValue = false
                 if case .confirmed(let text) = result { onConfirm(text) }
-            }
-        ))
+            })
+        })
     }
 }
 
 private struct AppDialogModifier: ViewModifier {
     var isActive: Bool
-    var makeDialog: () -> AppDialog?
-    var onResult: (AppDialogResult) -> Void
+    /// The dialog and what to do with its answer, made from the state at the moment it opens.
+    var prepare: () -> (dialog: AppDialog, onResult: (AppDialogResult) -> Void)?
     @State private var host = AppDialogHost()
 
     func body(content: Content) -> some View {
         content
             .background(WindowReader(host: host))
             .onChange(of: isActive, initial: true) { _, active in
-                if active, host.controller == nil, let dialog = makeDialog() {
-                    host.controller = AppDialogPresenter.present(dialog, over: host.window) { result in
+                if active, host.controller == nil, let prepared = prepare() {
+                    host.controller = AppDialogPresenter.present(prepared.dialog, over: host.window) { result in
                         host.controller = nil
-                        onResult(result)
+                        prepared.onResult(result)
                     }
                 } else if !active {
                     host.controller?.dismiss()
