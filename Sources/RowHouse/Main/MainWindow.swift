@@ -60,7 +60,11 @@ struct MainWindow: View {
         .onChange(of: app.sessions.count, initial: true) { _, _ in
             attachUndoManager()
             ensureDestination()
-            if let link = pendingLink, app.loading.isEmpty {
+        }
+        .onChange(of: app.loading) { _, _ in
+            // A base finished opening, or failed to: try the waiting link again. It waits again only
+            // while bases are still opening, so a link to a base that cannot open is dropped.
+            if let link = pendingLink {
                 pendingLink = nil
                 handleDeepLink(link)
             }
@@ -111,8 +115,8 @@ struct MainWindow: View {
         }
         guard let base = q["base"] else { return }
         guard let session = app.session(base) else {
-            // The link may have launched the app; replay it once the bases have opened.
-            if !app.loading.isEmpty || app.sessions.isEmpty { pendingLink = url }
+            // The link may have launched the app; replay it as the bases open.
+            if !app.loading.isEmpty { pendingLink = url }
             return
         }
         if url.host == "automations" {

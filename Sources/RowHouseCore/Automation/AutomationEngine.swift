@@ -201,7 +201,10 @@ public final class AutomationEngine {
         guard request.method == "GET" || request.method == "POST" else {
             return .error(405, "Use GET or POST", headers: ["Allow": "GET, POST"])
         }
-        guard let engine = engines.first(where: { $0.document.automation(route.automationID) != nil }) else {
+        // A duplicated or restored base holds the same automation, switched off. Prefer the base where
+        // it is on, so the original keeps answering however the engines are ordered.
+        let owners = engines.filter { $0.document.automation(route.automationID) != nil }
+        guard let engine = owners.first(where: { $0.document.automation(route.automationID)?.enabled == true }) ?? owners.first else {
             return .error(404, "No automation matches this URL")
         }
         switch await engine.webhookReceived(automationID: route.automationID, token: route.token, request: request) {
